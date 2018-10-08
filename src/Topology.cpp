@@ -145,6 +145,27 @@ std::string Topology::TruncResAtomName(int atom) const {
   return res_name;
 }
 
+// -----------------------------------------------------------------------------
+// Topology::TruncNumberlessResAtomName()
+/** Given an atom number, return a string containing the corresponding
+ * residue name (without number) along with the atom name taking format:
+ * "<resname>@<atomname>", e.g. "ARG@CA".
+ * Truncate the residue and atom names so there are no blanks.
+ */
+std::string Topology::TruncNumberlessResAtomName(int atom) const {
+  std::string res_name;
+  if (atom < 0 || atom >= (int)atoms_.size()) return res_name;
+    // Atom name with no trailing spaces.
+  std::string atom_name = atoms_[atom].Name().Truncated();
+  int res = atoms_[atom].ResNum();
+    // Residue name with no trailing spaces.
+    // NOTE: ensure a residue size of 4?
+  res_name = residues_[res].Name().Truncated();
+  res_name += "@";
+  res_name += atom_name;
+  return res_name;
+}
+
 // Topology::TruncResAtomNameNum()
 /** Given an atom number, return a string containing the corresponding 
   * residue name and number (starting from 1) along with the atom name 

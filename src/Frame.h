@@ -199,6 +199,8 @@ class Frame {
     inline Vec3 VGeometricCenter(int, int) const;
     /// Translate atoms in range by Vec
     inline void Translate(Vec3 const&, int, int);
+    /// Translate atoms in mask by Vec
+    inline void Translate(Vec3 const&, AtomMask const&);
     /// Translate atom by Vec
     inline void Translate(Vec3 const&, int);
     /// Translate all atoms by Vec
@@ -359,6 +361,15 @@ void Frame::Translate(Vec3 const& Vec, int firstAtom, int lastAtom) {
     X_[i  ] += Vec[0];
     X_[i+1] += Vec[1];
     X_[i+2] += Vec[2];
+  }
+}
+
+void Frame::Translate(Vec3 const& Vec, AtomMask const& mask) {
+  for (int i = 0; i < mask.Nselected(); i++) {
+    int atmid = 3 * mask.Selected()[i];
+    X_[atmid    ] += Vec[0];
+    X_[atmid + 1] += Vec[1];
+    X_[atmid + 2] += Vec[2];
   }
 }
 
