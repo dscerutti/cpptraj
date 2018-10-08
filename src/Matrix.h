@@ -1,5 +1,6 @@
 #ifndef INC_MATRIX_H
 #define INC_MATRIX_H
+#include <math.h>
 #include "ArrayIterator.h"
 /// Two-dimensional matrix template.
 template <class T> class Matrix {
