@@ -117,7 +117,7 @@ Action::RetType Action_AtomicFluct::Setup(ActionSetup& setup) {
     fluctParm_ = setup.TopAddress();
   } else if (Mask_.Nselected() != SumCoords_.Natom()) {
     // Check that current #atoms matches
-    mprinterr("Error: AtomicFluct not yet supported for mulitple topologies with different\n");
+    mprinterr("Error: AtomicFluct not yet supported for multiple topologies with different\n");
     mprinterr("       #s of atoms (set up for %i, this topology has %i\n",
               SumCoords_.Natom(), Mask_.Nselected());
     return Action::ERR;

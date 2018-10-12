@@ -518,7 +518,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     cmove[2] = round(cmove[2]);
     for (j = 0; j < 3; j++) {
       double val = cmove[j];
-      insr_->Add(3*(nops + 1 + i) + j, &val);
+      insr_->Add(3*(frameNum*(nops + 1) + i) + j, &val);
     }  
     cmove = (U * cmove) - (U * T[opID]);
 
@@ -530,7 +530,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
   // Record the final result, the origin at which all of these transformations are valid
   for (i = 0; i < 3; i++) {
     double val = Ovec[i];
-    insr_->Add(3*(nops + 1) + i, &val);
+    insr_->Add(3*(frameNum*(nops + 1) + nops) + i, &val);
   }
 
 #if 0
@@ -554,7 +554,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
   // Free allocated memory
   delete[] othr;
   
-  return Action::OK;
+  return Action::MODIFY_COORDS;
 }
 
 //---------------------------------------------------------------------------------------------
