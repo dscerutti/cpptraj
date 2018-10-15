@@ -516,40 +516,22 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     cmove[0] = round(cmove[0]);
     cmove[1] = round(cmove[1]);
     cmove[2] = round(cmove[2]);
-    for (j = 0; j < 3; j++) {
-      double val = cmove[j];
-      insr_->Add(3*(frameNum*(nops + 1) + i) + j, &val);
-    }  
     cmove = (U * cmove) - (U * T[opID]);
 
     // Translate the second subunit as needed, then apply the inverse rotation
     othr[i].Translate(cmove);
+    frm.ModifyFrm().Translate(cmove, Masks[i]);
   }
   Vec3 Ovec = BestOrigin(orig, othr, subunitOpID);
 
   // Record the final result, the origin at which all of these transformations are valid
-  for (i = 0; i < 3; i++) {
-    double val = Ovec[i];
-    insr_->Add(3*(frameNum*(nops + 1) + nops) + i, &val);
-  }
-
-#if 0
-  orig.NegTranslate(Ovec);
+  frm.ModifyFrm().NegTranslate(Ovec);  
   for (i = 0; i < nops; i++) {
     int opID = subunitOpID[i];
-    othr[i].NegTranslate(Ovec);
     Matrix_3x3 Rmat = R[opID];
     Rmat.Transpose();
-    othr[i].Rotate(Rmat);
-
-    // CHECK  
-#if 0
-    mprintf("RMSD From %4d %d -> %d: %9.4lf\n", frameNum, 0, i,
-            orig.RMSD_NoFit(othr[i], false));
-#endif
-    // END CHECK
+    frm.ModifyFrm().Rotate(Rmat, Masks[i]);
   }
-#endif
   
   // Free allocated memory
   delete[] othr;
