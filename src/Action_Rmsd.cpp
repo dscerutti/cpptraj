@@ -332,8 +332,14 @@ Action::RetType Action_Rmsd::Setup(ActionSetup& setup) {
   // correct masses in based on the mask.
   tgtFrame_.SetupFrameFromMask(tgtMask_, setup.Top().Atoms());
   // Reference setup
-  if (REF_.SetupRef(setup.Top(), tgtMask_.Nselected()))
+  if (REF_.SetupRef(setup.Top(), tgtMask_.Nselected())) {
+
+    // CHECK
+    mprintf("SKIPPING this rmsd reference setup.\n");
+    // END CHECK
+    
     return Action::SKIP;
+  }
  
   // Per residue rmsd setup
   if (perres_) {

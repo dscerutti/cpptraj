@@ -27,6 +27,10 @@ class Action_AtomicFluct : public Action, ActionFrameCounter {
     bool bfactor_;
     bool calc_adp_;
     bool usePdbRes_;
+    bool xtal_;
+    int nASU_;
+    int* unitmap_;
+    double* unitmult_;
     CpptrajFile* adpoutfile_;
     std::string outfilename_;
     Topology *fluctParm_;

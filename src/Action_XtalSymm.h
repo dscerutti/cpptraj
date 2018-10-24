@@ -52,6 +52,8 @@ class Action_XtalSymm : public Action {
     // Reference frame
     AtomMask tgtMask_;
     ReferenceAction REF_;
+    Frame RefFrame_;
+    bool useFirst_;
   
     // Masks for the asymmetric units
     int nmasks;
@@ -64,15 +66,13 @@ class Action_XtalSymm : public Action {
     Vec3* RefT;
     bool* rotIdentity;
 
-    // Data set to hold the results: instructions of what to do
-    // with each frame to make the superpositions work out
-    DataSet* insr_;
-  
     // Methods
     Action::RetType Init(ArgList&, ActionInit&, int);
     Action::RetType Setup(ActionSetup&);
     Action::RetType DoAction(int, ActionFrame&);
     Action::RetType LoadSpaceGroupSymOps();
+    bool OperationAvailable(XtalDock* leads, int* HowToGetThere, int ncurr);
+    bool OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncurr);
     double BestSuperposition(int, int, XtalDock*, int&);
     Vec3 BestOrigin(Frame&, Frame*, std::vector<int>&);
     void Print() {}

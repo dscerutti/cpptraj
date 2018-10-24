@@ -91,6 +91,16 @@ Action::RetType Action_AtomicFluct::Init(ArgList& actionArgs, ActionInit& init, 
   if (!setname.empty())
     mprintf("\tData will be saved to set named %s\n", setname.c_str());
 
+  // Check to see if there is a crystallographic symmetry data set
+  xtal_ = false;
+  for (int i = 0; i < (int)init.DSL().size(); i++) {
+    MetaData md = init.DSL()[i]->Meta();
+    if (md.Name().compare(0, 9, "ASU_masks") == 0) {
+      xtal_ = true;
+      nASU_ = init.DSL()[i]->Coord(0, 0);
+    }
+  }
+    
   return Action::OK;
 }
 
@@ -126,6 +136,23 @@ Action::RetType Action_AtomicFluct::Setup(ActionSetup& setup) {
       mprintf("Warning: Topology is changing. Will base output only using topology '%s'.\n",
               fluctParm_->c_str());
   }
+
+  // Set up the accumulation directions if this has crystal symmetry in effect.
+  // All asymmetric units will contribute to the same fluctuations as if they
+  // were different snapshots of the same thing.  The fluctuations (or B-factors)
+  // will be copied among all asymmetric units at the end.
+  if (xtal_) {
+    unitmap_  = new int[Mask_.Nselected()];
+    unitmult_ = new double[Mask_.Nselected()];
+
+    // CHECK
+    printf("Detected %d ASUs\n", nASU_);
+    // END CHECK
+    
+    for (int i = 0; i < nASU_; i++) {
+    }
+  }
+  
   return Action::OK;
 }
 
