@@ -33,15 +33,6 @@ Action::RetType Action_XtalSymm::Init(ArgList& actionArgs, ActionInit& init, int
     return Action::ERR;
   }
   useFirst_ = REF_.CurrentReference().empty();
-
-  // CHECK
-  if (useFirst_) {
-    printf("No reference was supplied.  The first frame will be used.\n");
-  }
-  else {
-    printf("I have a reference frame.\n");
-  }
-  // END CHECK
   
   // Set the masks for all symmetry-related subunits
   Masks = new AtomMask[nops];
@@ -343,6 +334,22 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
 bool Action_XtalSymm::OperationAvailable(XtalDock* leads, int* HowToGetThere, int ncurr)
 {
   int i;
+
+  // CHECK
+#if 0
+  printf("ncurr = %d\n", ncurr);
+  printf("HowToGetThere = [ ");
+  for (i = 0; i < ncurr; i++) {
+    printf("%d ", HowToGetThere[i]);
+  }
+  printf("];\n");
+  printf("leads.opID = [ ");
+  for (i = 0; i < ncurr; i++) {
+    printf("%d ", leads[HowToGetThere[i]].opID);
+  }
+  printf("];\n");
+#endif
+  // END CHECK
   
   for (i = 0; i < ncurr; i++) {
     if (leads[HowToGetThere[i]].opID == leads[HowToGetThere[ncurr]].opID) {
@@ -367,6 +374,27 @@ bool Action_XtalSymm::OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncur
   int i;
   double origx, origy, origz;
   
+  // CHECK
+#if 0
+  printf("ncurr = %d\n", ncurr);
+  printf("HowToGetThere = [ ");
+  for (i = 0; i < ncurr; i++) {
+    printf("%d ", HowToGetThere[i]);
+  }
+  printf("];\n");
+  printf("leads.subunit = [ ");
+  for (i = 0; i < ncurr; i++) {
+    printf("%d ", leads[HowToGetThere[i]].subunit);
+  }
+  printf("];\n");
+  printf("leads.opID = [ ");
+  for (i = 0; i < ncurr; i++) {
+    printf("%9.4lf ", leads[HowToGetThere[i]].origin[0]);
+  }
+  printf("];\n");
+#endif
+  // END CHECK
+
   // First, find a symmetry operation that involves an
   // actual rotation, where the origin would matter
   bool oxfound = false, oyfound = false, ozfound = false;
@@ -376,7 +404,7 @@ bool Action_XtalSymm::OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncur
     double dy = 0.0;
     double dz = 0.0;
     if (fabs(R[thisSU].Row1()[0] - 1.0) >= 1.0e-6 || fabs(R[thisSU].Row2()[0]) >= 1.0e-6 ||
-	fabs(R[thisSU].Row3()[0]) >= 1.0e-6) {
+        fabs(R[thisSU].Row3()[0]) >= 1.0e-6) {
       if (oxfound == false) {
         origx = leads[HowToGetThere[i]].origin[0];
         oxfound = true;
@@ -386,7 +414,7 @@ bool Action_XtalSymm::OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncur
       }
     }
     if (fabs(R[thisSU].Row1()[1]) >= 1.0e-6 || fabs(R[thisSU].Row2()[1] - 1.0) >= 1.0e-6 ||
-	fabs(R[thisSU].Row3()[1]) >= 1.0e-6) {
+        fabs(R[thisSU].Row3()[1]) >= 1.0e-6) {
       if (oyfound == false) {
         origy = leads[HowToGetThere[i]].origin[1];
         oyfound = true;
@@ -396,7 +424,7 @@ bool Action_XtalSymm::OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncur
       }
     }
     if (fabs(R[thisSU].Row1()[2]) >= 1.0e-6 || fabs(R[thisSU].Row2()[2]) >= 1.0e-6 ||
-	fabs(R[thisSU].Row3()[2] - 1.0) >= 1.0e-6) {
+        fabs(R[thisSU].Row3()[2] - 1.0) >= 1.0e-6) {
       if (ozfound == false) {
         origz = leads[HowToGetThere[i]].origin[2];
         ozfound = true;
@@ -406,25 +434,6 @@ bool Action_XtalSymm::OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncur
       }
     }
     if (dx*dx + dy*dy + dz*dz >= 100.0) {
-
-      // CHECK
-#if 0
-      int thisSU = leads[HowToGetThere[i]].subunit;
-      printf("[ %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf ]\n",
-             R[firstSU].Row1()[0], R[firstSU].Row1()[1], R[firstSU].Row1()[2],
-             R[thisSU].Row1()[0], R[thisSU].Row1()[1], R[thisSU].Row1()[2]);
-      printf("[ %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf ]\n",
-             R[firstSU].Row2()[0], R[firstSU].Row2()[1], R[firstSU].Row2()[2],
-             R[thisSU].Row2()[0], R[thisSU].Row2()[1], R[thisSU].Row2()[2]);
-      printf("[ %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf ]\n",
-             R[firstSU].Row3()[0], R[firstSU].Row3()[1], R[firstSU].Row3()[2],
-             R[thisSU].Row3()[0], R[thisSU].Row3()[1], R[thisSU].Row3()[2]);
-      printf("[ %9.4lf %9.4lf %9.4lf -> %9.4lf %9.4lf %9.4lf ] = %9.4lf\n", origx, origy,
-             origz, leads[HowToGetThere[i]].origin[0], leads[HowToGetThere[i]].origin[1],
-             leads[HowToGetThere[i]].origin[2], dx*dx + dy*dy + dz*dz);
-#endif
-      // END CHECK
-	  
       return false;
     }
   }
@@ -442,6 +451,16 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
   Frame* othr = new Frame[nops];
   Matrix_3x3 U, invU;
 
+  // CHECK
+  FILE *foutp;
+  if (frameNum == 0) {
+    foutp = fopen("xtals.m", "w");
+  }
+  else {
+    foutp = fopen("xtals.m", "a");
+  }
+  // END CHECK
+  
   // Allocate space for the subunit frames
   orig = Frame(Masks[0].Nselected());
   for (i = 0; i < nops; i++) {
@@ -457,17 +476,13 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     if (useFirst_) {
       RefFrame_.SetupFrame(frm.Frm().Natom());
       RefFrame_.SetCoordinates(frm.Frm(), tgtMask_);
-#if 0
-      RefFrame_.SetFrame(frm.Frm(), tgtMask_);
-#endif
     }
     else {
       RefFrame_.SetupFrame(REF_.CurrentReference().Natom());
       RefFrame_.SetCoordinates(REF_.CurrentReference(), tgtMask_);
-#if 0
-      RefFrame_.SetFrame(REF_.CurrentReference(), tgtMask_);
-#endif
     }    
+    U = RefFrame_.BoxCrd().UnitCell(1.0);
+    RefFrame_.BoxCrd().ToRecip(U, invU);
     XtalDock* leads = new XtalDock[nops * nops * 125];
     int nLead = 0;
     for (i = 0; i < nops; i++) {
@@ -476,6 +491,16 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
       }
     }
 
+    // CHECK
+    printf("Leads (%d) = [\n", nLead);
+    for (i = 0; i < nLead; i++) {
+      printf("  %d %d    %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf    %9.4lf\n",
+             leads[i].subunit, leads[i].opID, leads[i].origin[0], leads[i].origin[1],
+             leads[i].origin[2], leads[i].displc[0], leads[i].displc[1], leads[i].displc[2],
+             leads[i].rmsd);
+    }
+    // END CHECK
+    
     // Obtain clusters of origins, then see whether any of them holds all symmetry operations
     // and subunits, which of that group contains the tightest cluster of origins, and which
     // contains the lowest overall atom positional RMSD.  
@@ -483,7 +508,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     int occupancy[nops];
     int fnidXfrm = -1;
     for (i = 0; i < nops; i++) {
-      if (rotIdentity[leads[i].opID] == false) {
+      if (rotIdentity[i] == false) {
         fnidXfrm = i;
         break;
       }
@@ -505,333 +530,189 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
 
       // CHECK
       int ntests = 0;
-#if 0
-      for (i = 0; i < nLead; i++) {
-	printf("%d %d   %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf      %9.4lf\n",
-	       leads[i].subunit, leads[i].opID, leads[i].origin[0], leads[i].origin[1],
-	       leads[i].origin[2], leads[i].displc[0], leads[i].displc[1], leads[i].displc[2],
-	       leads[i].rmsd);
-	printf("    [ %9.4lf %9.4lf %9.4lf ]\n    [ %9.4lf %9.4lf %9.4lf ]\n"
-	       "    [ %9.4lf %9.4lf %9.4lf ]\n", R[leads[i].opID].Row1()[0],
-	       R[leads[i].opID].Row1()[1], R[leads[i].opID].Row1()[2],
-	       R[leads[i].opID].Row2()[0], R[leads[i].opID].Row2()[1],
-	       R[leads[i].opID].Row2()[2], R[leads[i].opID].Row3()[0],
-	       R[leads[i].opID].Row3()[1], R[leads[i].opID].Row3()[2]);
-      }
-#endif
       // END CHECK
       
       // This is not a P1 crystal, and there are many possible combinations of the discovered
       // leads that could paint the correct picture of how to reassemble the unit (super)
-      // cell.  This is
+      // cell.
       int HowToGetThere[nops];
       for (i = 0; i < nops; i++) {
-	HowToGetThere[i] = 0;
+        HowToGetThere[i] = 0;
       }
       double bestRmsd = 1.0e8;
       i = 0;
       while (HowToGetThere[0] < nLead) {
         while (i < nops) {
-          while (leads[HowToGetThere[i]].subunit != i ||
-                 OperationAvailable(leads, HowToGetThere, i) == false ||
-		 OriginsAlign(leads, HowToGetThere, i) == false) {
-
-	    // CHECK
-	    int reason = 0;
-	    if (leads[HowToGetThere[i]].subunit != i) {
-	      reason += 1;
-	    }
-	    if (OperationAvailable(leads, HowToGetThere, i) == false) {
-	      reason += 2;
-	    }
-	    if (OriginsAlign(leads, HowToGetThere, i) == false) {
-	      reason += 4;
-	    }
-	    // END CHECK
-
+          while (HowToGetThere[0] < nLead &&
+                 (leads[HowToGetThere[i]].subunit != i ||
+                  OperationAvailable(leads, HowToGetThere, i) == false ||
+                  OriginsAlign(leads, HowToGetThere, i) == false)) {
             HowToGetThere[i] += 1;
+            while (HowToGetThere[i] == nLead && i > 0) {
+              HowToGetThere[i] = 0;
+              i--;
+              HowToGetThere[i] += 1;
+            }
+          }
+          i++;
+          if (i == nops) {
 
-	    
-	    // CHECK
-#if 0
-	    printf("Set A (%d) :: ", reason);
-	    for (j = 0; j < nops; j++) {
-	      printf("%4d ", HowToGetThere[j]);
-	    }
-	    printf("\n");
-#endif
-	    // END CHECK
-	    
             // CHECK
-            if (HowToGetThere[i] > nLead) {
-              printf("Point A :: Whoops, we just overran the list: ");
-              for (j = 0; j < nops; j++) {
-                printf("%4d ", HowToGetThere[j]);
+            bool ThisIsIt = true;
+            for (j = 0; j < nops; j++) {            
+              if (leads[HowToGetThere[j]].subunit != leads[HowToGetThere[j]].opID) {
+                ThisIsIt = false;
               }
-              printf("\n");
+              if ((leads[HowToGetThere[j]].origin[0] > 20.0 ||
+                   leads[HowToGetThere[j]].origin[0] < 15.0) &&
+                  fabs(leads[HowToGetThere[j]].origin[0]) > 1.0e-3) {
+                ThisIsIt = false;
+              }
+              if ((leads[HowToGetThere[j]].origin[1] > 4.0 ||
+                   leads[HowToGetThere[j]].origin[1] < 0.0) &&
+                  fabs(leads[HowToGetThere[j]].origin[1]) > 1.0e-3) {
+                ThisIsIt = false;
+              }
+              if ((leads[HowToGetThere[j]].origin[2] > -12.0 ||
+                   leads[HowToGetThere[j]].origin[2] < -20.0) &&
+                  fabs(leads[HowToGetThere[j]].origin[2]) > 1.0e-3) {
+                ThisIsIt = false;
+              }
+            }
+            if (ThisIsIt) {
+              printf("SolutionCandidate %d = [ ", ntests);
+              for (j = 0; j < nops; j++) {
+                printf("%d-%d ", leads[HowToGetThere[j]].subunit,
+                       leads[HowToGetThere[j]].opID);
+              }
+              printf("];\nOrigins / Displacements = [\n");
+              for (j = 0; j < nops; j++) {            
+                printf("  %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf\n",
+                       leads[HowToGetThere[j]].origin[0], leads[HowToGetThere[j]].origin[1],
+                       leads[HowToGetThere[j]].origin[2], leads[HowToGetThere[j]].displc[0],
+                       leads[HowToGetThere[j]].displc[1], leads[HowToGetThere[j]].displc[2]);
+              }
+              printf("];\n");
+            }
+            ntests++;
+            // END CHECK
+            
+            // Check the RMSD that would result from this situation
+            orig.SetCoordinates(RefFrame_, Masks[0]);
+            Vec3 corig = orig.VCenterOfMass(0, orig.Natom());
+            std::vector<int> trialOpID;
+            trialOpID.reserve(nops);
+            for (j = 0; j < nops; j++) {
+              othr[j].SetCoordinates(RefFrame_, Masks[leads[HowToGetThere[j]].subunit]);
+              Vec3 cothr = othr[j].VCenterOfMass(0, othr[j].Natom());
+              Vec3 cdiff = cothr - corig;
+              cdiff = invU * cdiff;
+              Vec3 cmove = leads[HowToGetThere[j]].displc - cdiff;
+              cmove[0] = round(cmove[0]);
+              cmove[1] = round(cmove[1]);
+              cmove[2] = round(cmove[2]);
+              
+              // CHECK
+              if (ThisIsIt) {
+                printf("cmove = [ %9.4lf %9.4lf %9.4lf ]   T = [ %9.4lf %9.4lf %9.4lf ]\n",
+                       cmove[0], cmove[1], cmove[2], T[leads[HowToGetThere[j]].opID][0],
+                       T[leads[HowToGetThere[j]].opID][1], T[leads[HowToGetThere[j]].opID][2]);
+              }
+              // END CHECK
+              
+              cmove = (U * cmove) - (U * T[leads[HowToGetThere[j]].opID]);
+              othr[j].Translate(cmove);
+              trialOpID[j] = leads[HowToGetThere[j]].opID;
+
+	      // CHECK
+	      if (ThisIsIt) {
+                fprintf(foutp, "matcrd(:,:,%d) = [\n", j + 1);
+                for (k = 0; k < othr[j].Natom(); k += 100) {
+                  fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *othr[j].CRD(3*k),
+                          *othr[j].CRD(3*k + 1), *othr[j].CRD(3*k + 2));
+                }
+                fprintf(foutp, "];\n");
+	      }
+	      // END CHECK
+            }
+            Vec3 trOvec = BestOrigin(orig, othr, trialOpID);
+
+            // CHECK
+            if (ThisIsIt) {
+              printf("Best Origin = [ %9.4lf %9.4lf %9.4lf ]\n", trOvec[0], trOvec[1],
+                     trOvec[2]);
             }
             // END CHECK
-	    
-	    while (HowToGetThere[i] == nLead && i > 0) {
-	      HowToGetThere[i] = 0;
-	      i--;
-	      HowToGetThere[i] += 1;
+            
+            orig.NegTranslate(trOvec);
+            for (j = 0; j < nops; j++) {
+              othr[j].NegTranslate(trOvec);
+              Matrix_3x3 Rmat = R[trialOpID[j]];
+	      Rmat.Transpose();
+	      othr[j].Rotate(Rmat);
+            }
+            double trmsd = 0.0;
+
+            // CHECK
+            if (ThisIsIt) {
+              printf("trmsd = [ ");
+            }
+            // END CHECK
+            
+            for (j = 0; j < nops; j++) {
 
               // CHECK
-#if 0
-              printf("Set B :: ");
-              for (j = 0; j < nops; j++) {
-                printf("%4d ", HowToGetThere[j]);
+              if (ThisIsIt) {
+                printf("%9.4lf ", orig.RMSD_NoFit(othr[j], false));
               }
-              printf("\n");
-#endif
               // END CHECK
-
-	      // CHECK
-	      if (HowToGetThere[i] > nLead) {
-		printf("Point B :: Whoops, we just overran the list: ");
-		for (j = 0; j < nops; j++) {
-		  printf("%4d ", HowToGetThere[j]);
-		}
-		printf("\n");
-	      }
-	      // END CHECK
-	    }
-	  }
-	  i++;
-	  if (i == nops) {
-
-	    // Check the RMSD that would result from this situation
-
-	    // CHECK
-	    printf("test %d:\n", ntests);
-	    ntests++;
-	    for (j = 0; j < nops; j++) {
-	      printf("  %d %d   %9.4lf %9.4lf %9.4lf\n", leads[HowToGetThere[j]].subunit,
-		     leads[HowToGetThere[j]].opID, leads[HowToGetThere[j]].origin[0],
-		     leads[HowToGetThere[j]].origin[1], leads[HowToGetThere[j]].origin[2]);
-	    }
-	    printf("\n");
-	    // END CHECK
-	    
-	    // If there is more to do, decrement i and keep on going
-            if (HowToGetThere[0] < nLead && i > 0) {
-	      i--;
-	      HowToGetThere[i] += 1;
-
-	      // CHECK
-	      if (HowToGetThere[i] > nLead) {
-		printf("Point C :: Whoops, we just overran the list: ");
-		for (j = 0; j < nops; j++) {
-		  printf("%4d ", HowToGetThere[j]);
-		}
-		printf("\n");
-	      }
-	      // END CHECK
-
-	      while (HowToGetThere[i] == nLead && i > 0) {
-		HowToGetThere[i] = 0;
-		i--;
-		HowToGetThere[i] += 1;
-		
-	        // CHECK
-	        if (HowToGetThere[i] > nLead) {
-                  printf("Point D :: Whoops, we just overran the list: ");
-                  for (j = 0; j < nops; j++) {
-                    printf("%4d ", HowToGetThere[j]);
-                  }
-                  printf("\n");
-                }
-	        // END CHECK
-	      }
-	    }
-	  }
-	}	
-      }
-      exit(1);
-      
-      // CHECK
-      printf("There are %d leads:\n", nLead);
-      for (i = 0; i < nLead; i++) {
-        for (j = 0; j < nops; j++) {
-          if (leads[i].subunit == j) {
-            printf(" S %d  Op %d -> %9.4lf at [ %9.4lf %9.4lf %9.4lf ] starting from "
-                   "[ %9.4lf %9.4lf %9.4lf ]\n", leads[i].subunit, leads[i].opID,
-                   leads[i].rmsd, leads[i].displc[0], leads[i].displc[1], leads[i].displc[2],
-                   leads[i].origin[0], leads[i].origin[1], leads[i].origin[2]);
-          }
-        }
-      }
-      // END CHECK
-    }      
-#if 0
-      // This is not a P1 crystal, some transformations are not just trivial.
-      // Take the first non-identity rotation, loop over all leads, and find
-      // all leads that look at that rotation.  Take each of those leads and
-      // build up a list of transformations that put the origin in the same
-      // spot.  Keep tabs on which of them is the best in terms of rmsd in
-      // the end result.
-      double bestRmsd = 1.0e8;
-      for (i = 0; i < nLead; i++) {
-
-        // If the transformation is the identity matrix, then any origin will do,
-        // so any such transformation cannot initiate its own cluster but can
-        // contribute to every one of them.
-        if (leads[i].opID == fnidXfrm) {
-                
-          // The first member of this putative set is the lead bearing the
-          // non-identity rotation.  Find the rest.
-          trial[0] = leads[i];
-	  int nelem = -1;
-	  while (nelem < nops) {
-            int nelem = 1;
-            for (j = 0; j < nops; j++) {
-              if (j == fnidXfrm) {
-                continue;
-              }
-              for (k = 0; k < nLead; k++) {
-                bool matched = false;
-                for (m = 0; m < nelem; m++) {
-                if (leads[k].opID == trial[m].opID || leads[k].subunit == trial[m].subunit) {
-                  matched = true;
-                }
-              }
-              if (matched) {
-                continue;
-              }
-
-	      // CHECK
-	      printf("trial = [ ");
-	      for (m = 0; m < nelem; m++) {
-		printf("%d->%d ", trial[m].opID, trial[m].subunit);
-	      }
-	      printf("%d->%d\n", leads[k].opID, leads[k].subunit);trial[m].opID
-	      // END CHECK
-	      
-              double dx = leads[k].origin[0] - trial[0].origin[0];
-              double dy = leads[k].origin[1] - trial[0].origin[1];
-              double dz = leads[k].origin[2] - trial[0].origin[2];
-              double r2 = dx*dx + dy*dy + dz*dz;
-              if (r2 < 100.0) {
-                trial[nelem] = leads[k];
-                nelem++;
-              }
-              if (nelem == nops) {
-                break;
-              }
-            }
-            if (nelem == nops) {
-              break;
-            }
-          }
-
-	  // CHECK
-	  printf("Point A, nelem = %d.\n", nelem);
-	  // END CHECK	  
-
-	  if (nelem < nops) {
-            continue;
-          }
-
-	  // CHECK
-	  printf("Point B.\n");
-	  // END CHECK
-	  
-	  // CHECK
-	  for (j = 0; j < nops; j++) {
-	    occupancy[j] = 0;
-	  }
-	  for (j = 0; j < nops; j++) {
-	    if (trial[j].opID < 0 || trial[j].opID >= nops) {
-	      printf("Error.  trial[%d].opID = %d\n", j, trial[j].opID);
-	    }
-	    occupancy[trial[j].opID] += 1;
-	  }
-	  for (j = 0; j < nops; j++) {
-	    if (occupancy[j] != 1) {
-	      printf("Error.  occupancy[%d] = %d\n", j, occupancy[j]);
-	    }
-	  }	  
-	  // END CHECK
-	  
-          // CHECK
-          bool thisIsIt = true;
-          for (j = 0; j < nops; j++) {
-            if (trial[j].opID != j) {
-              thisIsIt = false;
-            }
-          }
-          if (thisIsIt) {
-            printf("This is the one.  Point A.\n");
-          }
-          // END CHECK
-          
-          // Look at the overall rmsd, taking the best possible origin
-          // for the system as a whole.  This is going to put more
-          // constraints on matching operations to subunits and RefT values.
-          U = RefFrame_.BoxCrd().UnitCell(1.0);
-          RefFrame_.BoxCrd().ToRecip(U, invU);
-          orig.SetCoordinates(RefFrame_, Masks[0]);
-          Vec3 corig = orig.VCenterOfMass(0, orig.Natom());
-          std::vector<int> trialOpID;
-          trialOpID.reserve(nops);
-          for (j = 0; j < nops; j++) {
-            othr[j].SetCoordinates(RefFrame_, Masks[j]);
-            Vec3 cothr = othr[j].VCenterOfMass(0, othr[j].Natom());
-            Vec3 cdiff = cothr - corig;
-            cdiff = invU * cdiff;
-            Vec3 cmove = RefT[trial[j].opID] - cdiff;
-            cmove[0] = round(cmove[0]);
-            cmove[1] = round(cmove[1]);
-            cmove[2] = round(cmove[2]);
-            cmove = (U * cmove) - (U * T[trial[j].opID]);
-            othr[j].Translate(cmove);
-            trialOpID[j] = trial[j].opID;
-          }
-          Vec3 trOvec = BestOrigin(orig, othr, trialOpID);
-          orig.NegTranslate(trOvec);
-          for (j = 0; j < nops; j++) {
-            othr[j].NegTranslate(trOvec);
-          }
-          double trmsd = 0.0;
-          for (j = 0; j < nops; j++) {
-            trmsd += orig.RMSD_NoFit(othr[j], false);
-          }
-          
-          // CHECK
-          if (thisIsIt) {
-            printf("This is the one.  Point B, trmsd = %9.4lf\n", trmsd);
-          }
-          // END CHECK
-
-          if (trmsd < bestRmsd) {
-            bestRmsd = trmsd;
-            for (j = 0; j < nops; j++) {
-              best[j] = trial[j];
+              
+              trmsd += orig.RMSD_NoFit(othr[j], false);
             }
 
             // CHECK
-            printf("Best is now: ");
-            for (j = 0; j < nops; j++) {
-              printf("%d->%d ", j, best[j].opID);
+            if (ThisIsIt) {
+              printf("];\n");
             }
-            printf(" (overall rmsd %9.4lf)\n", trmsd);
             // END CHECK
+            
+            if (trmsd < bestRmsd) {
+              bestRmsd = trmsd;
+              for (j = 0; j < nops; j++) {
+                subunitOpID[j] = trialOpID[j];
+                RefT[j] = leads[HowToGetThere[j]].displc;
+              }
+
+              // CHECK
+              printf("Best rmsd is now %9.4lf [ ", bestRmsd);
+              for (j = 0; j < nops; j++) {
+                printf("%d-%d ", leads[HowToGetThere[j]].subunit,
+                       leads[HowToGetThere[j]].opID);
+              }
+              printf("];\n");
+              // END CHECK
+            }
+
+            // If there is more to do, decrement i and keep on going
+            if (HowToGetThere[0] < nLead && i > 0) {
+              i--;
+              HowToGetThere[i] += 1;
+              while (HowToGetThere[i] == nLead && i > 0) {
+                HowToGetThere[i] = 0;
+                i--;
+                HowToGetThere[i] += 1;
+              }
+            }
           }
         }
       }
-
-      // The setup for all symmetry operations can now be recorded
-      for (i = 0; i < nops; i++) {
-        subunitOpID[i] = best[i].opID;
-        RefT[i] = best[i].displc;
-      }
     }
-#endif
+
     // CHECK
+    printf("Here is the strategy:\n");
     for (i = 0; i < nops; i++) {
-      printf("RefT[%2d] [ %2d ] = [ %9.4lf %9.4lf %9.4lf ]\n", i, subunitOpID[i],
-             RefT[i][0], RefT[i][1], RefT[i][2]);
+      printf("RefT[%2d] [ %2d ] = ", i, subunitOpID[i]);
+      printf("[ %9.4lf %9.4lf %9.4lf ]\n", RefT[i][0], RefT[i][1], RefT[i][2]);
     }
     // END CHECK
     
@@ -839,6 +720,19 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     delete[] leads;
   }
 
+  // CHECK
+  if (frameNum == 0) {
+    Frame myref;
+    myref = Frame(Masks[0].Nselected());
+    myref.SetCoordinates(RefFrame_, Masks[0]);
+    fprintf(foutp, "ref(:,:) = [\n", i + 1, frameNum + 1);
+    for (j = 0; j < myref.Natom(); j += 100) {
+      fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *myref.CRD(3*j), *myref.CRD(3*j + 1),
+	      *myref.CRD(3*j + 2));
+    }
+  }
+  // END CHECK
+  
   // Loop over all subunits, set them according to the correct displacements from
   // the original subunits (imaging considerations), and apply the transformations.
   U = frm.Frm().BoxCrd().UnitCell(1.0);
@@ -867,13 +761,32 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     cmove[1] = round(cmove[1]);
     cmove[2] = round(cmove[2]);
     cmove = (U * cmove) - (U * T[opID]);
-
+    
     // Translate the second subunit as needed, then apply the inverse rotation
     othr[i].Translate(cmove);
+
+    // CHECK
+    fprintf(foutp, "tcrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
+    for (j = 0; j < othr[i].Natom(); j += 100) {
+      fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *othr[i].CRD(3*j), *othr[i].CRD(3*j + 1),
+              *othr[i].CRD(3*j + 2));
+    }
+    fprintf(foutp, "];\n");
+    // END CHECK
+    
     frm.ModifyFrm().Translate(cmove, Masks[i]);
   }
   Vec3 Ovec = BestOrigin(orig, othr, subunitOpID);
 
+  // CHECK
+  for (i = 0; i < nops; i++) {
+    subunitOpID[i] = i;
+  }
+  Ovec = BestOrigin(orig, othr, subunitOpID);
+  fprintf(foutp, "Origin(%d,:) = [ %9.4lf %9.4lf %9.4lf ];\n", frameNum + 1,
+          Ovec[0], Ovec[1], Ovec[2]);
+  // END CHECK
+  
   // Record the final result, the origin at which all of these transformations are valid
   frm.ModifyFrm().NegTranslate(Ovec);  
   for (i = 0; i < nops; i++) {
@@ -882,6 +795,10 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     Rmat.Transpose();
     frm.ModifyFrm().Rotate(Rmat, Masks[i]);
   }
+
+  // CHECK
+  fclose(foutp);
+  // END CHECK
   
   // Free allocated memory
   delete[] othr;
