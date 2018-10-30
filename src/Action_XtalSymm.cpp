@@ -335,22 +335,6 @@ bool Action_XtalSymm::OperationAvailable(XtalDock* leads, int* HowToGetThere, in
 {
   int i;
 
-  // CHECK
-#if 0
-  printf("ncurr = %d\n", ncurr);
-  printf("HowToGetThere = [ ");
-  for (i = 0; i < ncurr; i++) {
-    printf("%d ", HowToGetThere[i]);
-  }
-  printf("];\n");
-  printf("leads.opID = [ ");
-  for (i = 0; i < ncurr; i++) {
-    printf("%d ", leads[HowToGetThere[i]].opID);
-  }
-  printf("];\n");
-#endif
-  // END CHECK
-  
   for (i = 0; i < ncurr; i++) {
     if (leads[HowToGetThere[i]].opID == leads[HowToGetThere[ncurr]].opID) {
       return false;
@@ -374,27 +358,6 @@ bool Action_XtalSymm::OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncur
   int i;
   double origx, origy, origz;
   
-  // CHECK
-#if 0
-  printf("ncurr = %d\n", ncurr);
-  printf("HowToGetThere = [ ");
-  for (i = 0; i < ncurr; i++) {
-    printf("%d ", HowToGetThere[i]);
-  }
-  printf("];\n");
-  printf("leads.subunit = [ ");
-  for (i = 0; i < ncurr; i++) {
-    printf("%d ", leads[HowToGetThere[i]].subunit);
-  }
-  printf("];\n");
-  printf("leads.opID = [ ");
-  for (i = 0; i < ncurr; i++) {
-    printf("%9.4lf ", leads[HowToGetThere[i]].origin[0]);
-  }
-  printf("];\n");
-#endif
-  // END CHECK
-
   // First, find a symmetry operation that involves an
   // actual rotation, where the origin would matter
   bool oxfound = false, oyfound = false, ozfound = false;
@@ -451,16 +414,6 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
   Frame* othr = new Frame[nops];
   Matrix_3x3 U, invU;
 
-  // CHECK
-  FILE *foutp;
-  if (frameNum == 0) {
-    foutp = fopen("xtals.m", "w");
-  }
-  else {
-    foutp = fopen("xtals.m", "a");
-  }
-  // END CHECK
-  
   // Allocate space for the subunit frames
   orig = Frame(Masks[0].Nselected());
   for (i = 0; i < nops; i++) {
@@ -491,16 +444,6 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
       }
     }
 
-    // CHECK
-    printf("Leads (%d) = [\n", nLead);
-    for (i = 0; i < nLead; i++) {
-      printf("  %d %d    %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf    %9.4lf\n",
-             leads[i].subunit, leads[i].opID, leads[i].origin[0], leads[i].origin[1],
-             leads[i].origin[2], leads[i].displc[0], leads[i].displc[1], leads[i].displc[2],
-             leads[i].rmsd);
-    }
-    // END CHECK
-    
     // Obtain clusters of origins, then see whether any of them holds all symmetry operations
     // and subunits, which of that group contains the tightest cluster of origins, and which
     // contains the lowest overall atom positional RMSD.  
@@ -591,50 +534,6 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
 		torig += dsp[0]*dsp[0] + dsp[1]*dsp[1] + dsp[2]*dsp[2];
 	      }
               torig += trOvec[0]*trOvec[0] + trOvec[1]*trOvec[1]+ trOvec[2]*trOvec[2];
-
-              // CHECK
-              printf("[ %12.8lf vs %12.8lf ]\n", trmsd, bestRmsd);
-              for (j = 0; j < nops; j++) {
-                printf("Start_%d = [\n", j);
-                Frame tmpF;
-                tmpF = Frame(Masks[j].Nselected());
-                tmpF.SetCoordinates(RefFrame_, Masks[leads[HowToGetThere[j]].subunit]);
-                for (k = 0; k < othr[j].Natom(); k += 100) {
-                  printf("  %9.4lf %9.4lf %9.4lf\n", *tmpF.CRD(3*k), *tmpF.CRD(3*k + 1),
-                         *tmpF.CRD(3*k + 2));
-                }
-                printf("];\n");
-              }
-              printf("SolutionCandidate = [ ");
-              for (j = 0; j < nops; j++) {
-                printf("%d-%d ", leads[HowToGetThere[j]].subunit,
-                       leads[HowToGetThere[j]].opID);
-              }
-              printf("];\nOrigins / Displacements = [\n");
-              for (j = 0; j < nops; j++) {            
-                printf("  %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf\n",
-                       leads[HowToGetThere[j]].origin[0], leads[HowToGetThere[j]].origin[1],
-                       leads[HowToGetThere[j]].origin[2], leads[HowToGetThere[j]].displc[0],
-                       leads[HowToGetThere[j]].displc[1], leads[HowToGetThere[j]].displc[2]);
-              }
-              printf("];\n");
-              for (j = 0; j < nops; j++) {
-                printf("End_%d = [\n", j);
-                for (k = 0; k < othr[j].Natom(); k += 100) {
-                  printf("  %9.4lf %9.4lf %9.4lf\n", *othr[j].CRD(3*k),
-                          *othr[j].CRD(3*k + 1), *othr[j].CRD(3*k + 2));
-                }
-                printf("];\n");
-              }
-              printf("Best Origin = [ %9.4lf %9.4lf %9.4lf ]\n", trOvec[0], trOvec[1],
-                     trOvec[2]);
-              printf("trmsd = [ ");
-              for (j = 0; j < nops; j++) {
-                printf("%9.4lf ", orig.RMSD_NoFit(othr[j], false));
-              }
-              printf("];\n");
-              // END CHECK
-
               if (torig < bestOrig) {
                 bestRmsd = trmsd;
                 bestOrig = torig;
@@ -642,19 +541,6 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
                   subunitOpID[j] = trialOpID[j];
                   RefT[j] = leads[HowToGetThere[j]].displc;
                 }
-
-                // CHECK
-                printf("Best rmsd is now %9.4lf (origin %9.4lf) [ ", bestRmsd, bestOrig);
-                for (j = 0; j < nops; j++) {
-                  printf("%d-%d ", leads[HowToGetThere[j]].subunit,
-                         leads[HowToGetThere[j]].opID);
-                }
-                printf("];\n");
-                for (j = 0; j < 95; j++) {
-                  printf("-");
-                }
-                printf("\n\n");
-                // END CHECK
               }
             }
 
@@ -672,32 +558,10 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
         }
       }
     }
-
-    // CHECK
-    printf("Here is the strategy:\n");
-    for (i = 0; i < nops; i++) {
-      printf("RefT[%2d] [ %2d ] = ", i, subunitOpID[i]);
-      printf("[ %9.4lf %9.4lf %9.4lf ]\n", RefT[i][0], RefT[i][1], RefT[i][2]);
-    }
-    // END CHECK
     
     // Free allocated memory
     delete[] leads;
   }
-
-  // CHECK
-  if (frameNum == 0) {
-    Frame myref;
-    myref = Frame(Masks[0].Nselected());
-    myref.SetCoordinates(RefFrame_, Masks[0]);
-    fprintf(foutp, "ref(:,:) = [\n", i + 1, frameNum + 1);
-    for (j = 0; j < myref.Natom(); j += 100) {
-      fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *myref.CRD(3*j), *myref.CRD(3*j + 1),
-              *myref.CRD(3*j + 2));
-    }
-    fprintf(foutp, "];\n");
-  }
-  // END CHECK
   
   // Loop over all subunits, set them according to the correct displacements from
   // the original subunits (imaging considerations), and apply the transformations.
@@ -730,90 +594,19 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     
     // Translate the second subunit as needed, then apply the inverse rotation
     othr[i].Translate(cmove);
-
-    // CHECK
-    if (frameNum == 7) {
-      fprintf(foutp, "tcrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
-      for (j = 0; j < othr[i].Natom(); j += 100) {
-        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *othr[i].CRD(3*j), *othr[i].CRD(3*j + 1),
-                *othr[i].CRD(3*j + 2));
-      }
-      fprintf(foutp, "];\n");
-    }
-    // END CHECK
-    
     frm.ModifyFrm().Translate(cmove, Masks[i]);
-
-    // CHECK
-    if (frameNum == 7) {
-      Frame mychk;
-      mychk = Frame(Masks[i].Nselected());
-      mychk.SetCoordinates(frm.Frm(), Masks[i]);
-      fprintf(foutp, "FRtcrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
-      for (j = 0; j < othr[i].Natom(); j += 100) {
-        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *mychk.CRD(3*j), *mychk.CRD(3*j + 1),
-                *mychk.CRD(3*j + 2));
-      }
-      fprintf(foutp, "];\n");
-    }
-    // END CHECK
   }
   Vec3 Ovec = BestOrigin(orig, othr, subunitOpID);
 
-  // CHECK
-  if (frameNum == 7) {
-    fprintf(foutp, "Origin(%d,:) = [ %9.4lf %9.4lf %9.4lf ];\n", frameNum + 1,
-            Ovec[0], Ovec[1], Ovec[2]);
-  }
-  // END CHECK
-  
   // Record the final result, the origin at which all of these transformations are valid
   frm.ModifyFrm().NegTranslate(Ovec);  
   for (i = 0; i < nops; i++) {
     int opID = subunitOpID[i];
     Matrix_3x3 Rmat = R[opID];
     Rmat.Transpose();
-
-    // CHECK
-     Frame mychk;
-    if (frameNum == 7) {
-      othr[i].NegTranslate(Ovec);    
-      fprintf(foutp, "ocrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
-      for (j = 0; j < othr[i].Natom(); j += 100) {
-        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *othr[i].CRD(3*j), *othr[i].CRD(3*j + 1),
-                *othr[i].CRD(3*j + 2));
-      }
-      fprintf(foutp, "];\n");
-      mychk = Frame(Masks[i].Nselected());
-      mychk.SetCoordinates(frm.Frm(), Masks[i]);
-      fprintf(foutp, "FRocrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
-      for (j = 0; j < othr[i].Natom(); j += 100) {
-        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *mychk.CRD(3*j), *mychk.CRD(3*j + 1),
-                *mychk.CRD(3*j + 2));
-      }
-      fprintf(foutp, "];\n");
-    }
-    // END CHECK
-
     frm.ModifyFrm().Rotate(Rmat, Masks[i]);
-
-    // CHECK
-    if (frameNum == 7) {
-      mychk.SetCoordinates(frm.Frm(), Masks[i]);
-      fprintf(foutp, "FRfincrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
-      for (j = 0; j < othr[i].Natom(); j += 100) {
-        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *mychk.CRD(3*j), *mychk.CRD(3*j + 1),
-                *mychk.CRD(3*j + 2));
-      }
-      fprintf(foutp, "];\n");
-    }
-    // END CHECK
   }
 
-  // CHECK
-  fclose(foutp);
-  // END CHECK
-  
   // Free allocated memory
   delete[] othr;
   
