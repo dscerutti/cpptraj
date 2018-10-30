@@ -527,10 +527,6 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
       }
     }
     else {
-
-      // CHECK
-      int ntests = 0;
-      // END CHECK
       
       // This is not a P1 crystal, and there are many possible combinations of the discovered
       // leads that could paint the correct picture of how to reassemble the unit (super)
@@ -540,6 +536,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
         HowToGetThere[i] = 0;
       }
       double bestRmsd = 1.0e8;
+      double bestOrig = 1.0e8;
       i = 0;
       while (HowToGetThere[0] < nLead) {
         while (i < nops) {
@@ -556,46 +553,6 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
           }
           i++;
           if (i == nops) {
-
-            // CHECK
-            bool ThisIsIt = true;
-            for (j = 0; j < nops; j++) {            
-              if (leads[HowToGetThere[j]].subunit != leads[HowToGetThere[j]].opID) {
-                ThisIsIt = false;
-              }
-              if ((leads[HowToGetThere[j]].origin[0] > 20.0 ||
-                   leads[HowToGetThere[j]].origin[0] < 15.0) &&
-                  fabs(leads[HowToGetThere[j]].origin[0]) > 1.0e-3) {
-                ThisIsIt = false;
-              }
-              if ((leads[HowToGetThere[j]].origin[1] > 4.0 ||
-                   leads[HowToGetThere[j]].origin[1] < 0.0) &&
-                  fabs(leads[HowToGetThere[j]].origin[1]) > 1.0e-3) {
-                ThisIsIt = false;
-              }
-              if ((leads[HowToGetThere[j]].origin[2] > -12.0 ||
-                   leads[HowToGetThere[j]].origin[2] < -20.0) &&
-                  fabs(leads[HowToGetThere[j]].origin[2]) > 1.0e-3) {
-                ThisIsIt = false;
-              }
-            }
-            if (ThisIsIt) {
-              printf("SolutionCandidate %d = [ ", ntests);
-              for (j = 0; j < nops; j++) {
-                printf("%d-%d ", leads[HowToGetThere[j]].subunit,
-                       leads[HowToGetThere[j]].opID);
-              }
-              printf("];\nOrigins / Displacements = [\n");
-              for (j = 0; j < nops; j++) {            
-                printf("  %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf\n",
-                       leads[HowToGetThere[j]].origin[0], leads[HowToGetThere[j]].origin[1],
-                       leads[HowToGetThere[j]].origin[2], leads[HowToGetThere[j]].displc[0],
-                       leads[HowToGetThere[j]].displc[1], leads[HowToGetThere[j]].displc[2]);
-              }
-              printf("];\n");
-            }
-            ntests++;
-            // END CHECK
             
             // Check the RMSD that would result from this situation
             orig.SetCoordinates(RefFrame_, Masks[0]);
@@ -611,86 +568,94 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
               cmove[0] = round(cmove[0]);
               cmove[1] = round(cmove[1]);
               cmove[2] = round(cmove[2]);
-              
-              // CHECK
-              if (ThisIsIt) {
-                printf("cmove = [ %9.4lf %9.4lf %9.4lf ]   T = [ %9.4lf %9.4lf %9.4lf ]\n",
-                       cmove[0], cmove[1], cmove[2], T[leads[HowToGetThere[j]].opID][0],
-                       T[leads[HowToGetThere[j]].opID][1], T[leads[HowToGetThere[j]].opID][2]);
-              }
-              // END CHECK
-              
               cmove = (U * cmove) - (U * T[leads[HowToGetThere[j]].opID]);
               othr[j].Translate(cmove);
               trialOpID[j] = leads[HowToGetThere[j]].opID;
-
-	      // CHECK
-	      if (ThisIsIt) {
-                fprintf(foutp, "matcrd(:,:,%d) = [\n", j + 1);
-                for (k = 0; k < othr[j].Natom(); k += 100) {
-                  fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *othr[j].CRD(3*k),
-                          *othr[j].CRD(3*k + 1), *othr[j].CRD(3*k + 2));
-                }
-                fprintf(foutp, "];\n");
-	      }
-	      // END CHECK
             }
             Vec3 trOvec = BestOrigin(orig, othr, trialOpID);
-
-            // CHECK
-            if (ThisIsIt) {
-              printf("Best Origin = [ %9.4lf %9.4lf %9.4lf ]\n", trOvec[0], trOvec[1],
-                     trOvec[2]);
-            }
-            // END CHECK
-            
             orig.NegTranslate(trOvec);
             for (j = 0; j < nops; j++) {
               othr[j].NegTranslate(trOvec);
               Matrix_3x3 Rmat = R[trialOpID[j]];
-	      Rmat.Transpose();
-	      othr[j].Rotate(Rmat);
+              Rmat.Transpose();
+              othr[j].Rotate(Rmat);
             }
             double trmsd = 0.0;
-
-            // CHECK
-            if (ThisIsIt) {
-              printf("trmsd = [ ");
-            }
-            // END CHECK
-            
             for (j = 0; j < nops; j++) {
-
-              // CHECK
-              if (ThisIsIt) {
-                printf("%9.4lf ", orig.RMSD_NoFit(othr[j], false));
-              }
-              // END CHECK
-              
               trmsd += orig.RMSD_NoFit(othr[j], false);
             }
-
-            // CHECK
-            if (ThisIsIt) {
-              printf("];\n");
-            }
-            // END CHECK
-            
-            if (trmsd < bestRmsd) {
-              bestRmsd = trmsd;
+            if (trmsd < bestRmsd + 0.1) {
+              double torig = 0.0;
               for (j = 0; j < nops; j++) {
-                subunitOpID[j] = trialOpID[j];
-                RefT[j] = leads[HowToGetThere[j]].displc;
-              }
+		Vec3 dsp = U * leads[HowToGetThere[j]].displc;
+		torig += dsp[0]*dsp[0] + dsp[1]*dsp[1] + dsp[2]*dsp[2];
+	      }
+              torig += trOvec[0]*trOvec[0] + trOvec[1]*trOvec[1]+ trOvec[2]*trOvec[2];
 
               // CHECK
-              printf("Best rmsd is now %9.4lf [ ", bestRmsd);
+              printf("[ %12.8lf vs %12.8lf ]\n", trmsd, bestRmsd);
+              for (j = 0; j < nops; j++) {
+                printf("Start_%d = [\n", j);
+                Frame tmpF;
+                tmpF = Frame(Masks[j].Nselected());
+                tmpF.SetCoordinates(RefFrame_, Masks[leads[HowToGetThere[j]].subunit]);
+                for (k = 0; k < othr[j].Natom(); k += 100) {
+                  printf("  %9.4lf %9.4lf %9.4lf\n", *tmpF.CRD(3*k), *tmpF.CRD(3*k + 1),
+                         *tmpF.CRD(3*k + 2));
+                }
+                printf("];\n");
+              }
+              printf("SolutionCandidate = [ ");
               for (j = 0; j < nops; j++) {
                 printf("%d-%d ", leads[HowToGetThere[j]].subunit,
                        leads[HowToGetThere[j]].opID);
               }
+              printf("];\nOrigins / Displacements = [\n");
+              for (j = 0; j < nops; j++) {            
+                printf("  %9.4lf %9.4lf %9.4lf    %9.4lf %9.4lf %9.4lf\n",
+                       leads[HowToGetThere[j]].origin[0], leads[HowToGetThere[j]].origin[1],
+                       leads[HowToGetThere[j]].origin[2], leads[HowToGetThere[j]].displc[0],
+                       leads[HowToGetThere[j]].displc[1], leads[HowToGetThere[j]].displc[2]);
+              }
+              printf("];\n");
+              for (j = 0; j < nops; j++) {
+                printf("End_%d = [\n", j);
+                for (k = 0; k < othr[j].Natom(); k += 100) {
+                  printf("  %9.4lf %9.4lf %9.4lf\n", *othr[j].CRD(3*k),
+                          *othr[j].CRD(3*k + 1), *othr[j].CRD(3*k + 2));
+                }
+                printf("];\n");
+              }
+              printf("Best Origin = [ %9.4lf %9.4lf %9.4lf ]\n", trOvec[0], trOvec[1],
+                     trOvec[2]);
+              printf("trmsd = [ ");
+              for (j = 0; j < nops; j++) {
+                printf("%9.4lf ", orig.RMSD_NoFit(othr[j], false));
+              }
               printf("];\n");
               // END CHECK
+
+              if (torig < bestOrig) {
+                bestRmsd = trmsd;
+                bestOrig = torig;
+                for (j = 0; j < nops; j++) {
+                  subunitOpID[j] = trialOpID[j];
+                  RefT[j] = leads[HowToGetThere[j]].displc;
+                }
+
+                // CHECK
+                printf("Best rmsd is now %9.4lf (origin %9.4lf) [ ", bestRmsd, bestOrig);
+                for (j = 0; j < nops; j++) {
+                  printf("%d-%d ", leads[HowToGetThere[j]].subunit,
+                         leads[HowToGetThere[j]].opID);
+                }
+                printf("];\n");
+                for (j = 0; j < 95; j++) {
+                  printf("-");
+                }
+                printf("\n\n");
+                // END CHECK
+              }
             }
 
             // If there is more to do, decrement i and keep on going
@@ -728,8 +693,9 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     fprintf(foutp, "ref(:,:) = [\n", i + 1, frameNum + 1);
     for (j = 0; j < myref.Natom(); j += 100) {
       fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *myref.CRD(3*j), *myref.CRD(3*j + 1),
-	      *myref.CRD(3*j + 2));
+              *myref.CRD(3*j + 2));
     }
+    fprintf(foutp, "];\n");
   }
   // END CHECK
   
@@ -766,25 +732,39 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     othr[i].Translate(cmove);
 
     // CHECK
-    fprintf(foutp, "tcrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
-    for (j = 0; j < othr[i].Natom(); j += 100) {
-      fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *othr[i].CRD(3*j), *othr[i].CRD(3*j + 1),
-              *othr[i].CRD(3*j + 2));
+    if (frameNum == 7) {
+      fprintf(foutp, "tcrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
+      for (j = 0; j < othr[i].Natom(); j += 100) {
+        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *othr[i].CRD(3*j), *othr[i].CRD(3*j + 1),
+                *othr[i].CRD(3*j + 2));
+      }
+      fprintf(foutp, "];\n");
     }
-    fprintf(foutp, "];\n");
     // END CHECK
     
     frm.ModifyFrm().Translate(cmove, Masks[i]);
+
+    // CHECK
+    if (frameNum == 7) {
+      Frame mychk;
+      mychk = Frame(Masks[i].Nselected());
+      mychk.SetCoordinates(frm.Frm(), Masks[i]);
+      fprintf(foutp, "FRtcrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
+      for (j = 0; j < othr[i].Natom(); j += 100) {
+        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *mychk.CRD(3*j), *mychk.CRD(3*j + 1),
+                *mychk.CRD(3*j + 2));
+      }
+      fprintf(foutp, "];\n");
+    }
+    // END CHECK
   }
   Vec3 Ovec = BestOrigin(orig, othr, subunitOpID);
 
   // CHECK
-  for (i = 0; i < nops; i++) {
-    subunitOpID[i] = i;
+  if (frameNum == 7) {
+    fprintf(foutp, "Origin(%d,:) = [ %9.4lf %9.4lf %9.4lf ];\n", frameNum + 1,
+            Ovec[0], Ovec[1], Ovec[2]);
   }
-  Ovec = BestOrigin(orig, othr, subunitOpID);
-  fprintf(foutp, "Origin(%d,:) = [ %9.4lf %9.4lf %9.4lf ];\n", frameNum + 1,
-          Ovec[0], Ovec[1], Ovec[2]);
   // END CHECK
   
   // Record the final result, the origin at which all of these transformations are valid
@@ -793,7 +773,41 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     int opID = subunitOpID[i];
     Matrix_3x3 Rmat = R[opID];
     Rmat.Transpose();
+
+    // CHECK
+     Frame mychk;
+    if (frameNum == 7) {
+      othr[i].NegTranslate(Ovec);    
+      fprintf(foutp, "ocrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
+      for (j = 0; j < othr[i].Natom(); j += 100) {
+        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *othr[i].CRD(3*j), *othr[i].CRD(3*j + 1),
+                *othr[i].CRD(3*j + 2));
+      }
+      fprintf(foutp, "];\n");
+      mychk = Frame(Masks[i].Nselected());
+      mychk.SetCoordinates(frm.Frm(), Masks[i]);
+      fprintf(foutp, "FRocrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
+      for (j = 0; j < othr[i].Natom(); j += 100) {
+        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *mychk.CRD(3*j), *mychk.CRD(3*j + 1),
+                *mychk.CRD(3*j + 2));
+      }
+      fprintf(foutp, "];\n");
+    }
+    // END CHECK
+
     frm.ModifyFrm().Rotate(Rmat, Masks[i]);
+
+    // CHECK
+    if (frameNum == 7) {
+      mychk.SetCoordinates(frm.Frm(), Masks[i]);
+      fprintf(foutp, "FRfincrd(:,:,%d,%d) = [\n", i + 1, frameNum + 1);
+      for (j = 0; j < othr[i].Natom(); j += 100) {
+        fprintf(foutp, "  %9.4lf %9.4lf %9.4lf\n", *mychk.CRD(3*j), *mychk.CRD(3*j + 1),
+                *mychk.CRD(3*j + 2));
+      }
+      fprintf(foutp, "];\n");
+    }
+    // END CHECK
   }
 
   // CHECK
