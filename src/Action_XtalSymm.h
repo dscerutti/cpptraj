@@ -5,11 +5,13 @@
 #include "ReferenceAction.h"
 #include "Vec3.h"
 
+//---------------------------------------------------------------------------------------------
 // XtalDock: stores the results of crystal symmetry operations on solitary subunits,
 //           attempting to align them back to the original asymmetric unit.  The goal
 //           is to cluster the origins of multiple operations such that one cluster
 //           has all of its required origins in about the same spot and gives
 //           consistently low atom positional RMSDs.
+//---------------------------------------------------------------------------------------------
 class XtalDock {
   public:
     int subunit;  // The subunit that this is operating on
@@ -31,8 +33,23 @@ class XtalDock {
     }
 };
 
+//---------------------------------------------------------------------------------------------
+// TransOp: stores an initial translation (as three doubles) plus the index of an operation.
+//          This information will help guide points (or entire coordinate sets) from some
+//          starting position into one of the regions of space for a given asymmetric unit.
+//---------------------------------------------------------------------------------------------
+class TransOp {
+  public:
+  int opID;      // Operation index
+  double tr_x;   // Initial X translation
+  double tr_y;   // Initial Y translation
+  double tr_z;   // Initial Z translation
+};
+
+//---------------------------------------------------------------------------------------------
 // XtalSymm: an action to superimpose symmetry-related parts of a simulation system using
 //           crystallographic symmetry operations
+//---------------------------------------------------------------------------------------------
 class Action_XtalSymm : public Action {
   public:
     Action_XtalSymm() {}
@@ -48,12 +65,14 @@ class Action_XtalSymm : public Action {
     int nCopyC;            //   space group, and allows us to talk about symmetry operations
                            //   in terms of the supercell.
     std::string spaceGrp;  //
-
+    int sgID;              // The space group identification number
+ 
     // Reference frame
     AtomMask tgtMask_;
     ReferenceAction REF_;
     Frame RefFrame_;
     bool useFirst_;
+    bool allToFirstASU_;
   
     // Masks for the asymmetric units
     int nmasks;
@@ -66,6 +85,9 @@ class Action_XtalSymm : public Action {
     Vec3* RefT;
     bool* rotIdentity;
 
+    // Grid for ASU assignment of loose molecules
+    TransOp* AsuGrid;
+  
     // Methods
     Action::RetType Init(ArgList&, ActionInit&, int);
     Action::RetType Setup(ActionSetup&);
@@ -75,7 +97,15 @@ class Action_XtalSymm : public Action {
     bool OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncurr);
     double BestSuperposition(int, int, XtalDock*, int&);
     Vec3 BestOrigin(Frame&, Frame*, std::vector<int>&);
+    Action::RetType BuildAsuGrid();
     void Print() {}
     void ClearMemory();
+    double dmin(double, double);
+    double dmin(double, double, double);
+    double dmin(double, double, double, double);
+    double dmax(double, double);
+    double dmax(double, double, double);
+    double dmax(double, double, double, double);
+    bool PointInPrimaryASU(double x, double y, double z);
 };
 #endif

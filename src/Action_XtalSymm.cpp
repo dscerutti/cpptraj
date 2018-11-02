@@ -4,9 +4,11 @@
 #include "CpptrajStdio.h"
 #include "Matrix.h"
 
+//---------------------------------------------------------------------------------------------
 // Action_XtalSymm::Help()
+//---------------------------------------------------------------------------------------------
 void Action_XtalSymm::Help() const {
-  mprintf("\t<mask> [reference] group <space group>\n"
+  mprintf("\t<mask> [reference] group <space group> [collect]\n"
           "\t[na <# replicas along a vector>]\n"
           "\t[nb <# replicas along b vector>] [nc <# replicas along c vector>]\n",
           ReferenceAction::Help());
@@ -25,6 +27,7 @@ Action::RetType Action_XtalSymm::Init(ArgList& actionArgs, ActionInit& init, int
   nCopyA = actionArgs.getKeyInt("na", 1);
   nCopyB = actionArgs.getKeyInt("nb", 1);
   nCopyC = actionArgs.getKeyInt("nc", 1);
+  allToFirstASU_ = actionArgs.hasKey("collect");  
   LoadSpaceGroupSymOps();
 
   // Get the reference frame if possible (if there is no reference, the first
@@ -200,6 +203,99 @@ double Action_XtalSymm::BestSuperposition(int maskID, int operID, XtalDock* lead
 }
 
 //---------------------------------------------------------------------------------------------
+// BuildAsuGrid: build a grid spanning the unit cell to indicate the approximate extent of
+//               each asymmetric unit's volume.  Grid bins that do not fall entirely within
+//               one asymmetric unit will be labelled as wildcards and any coordinates that
+//               fall in those bins will have to be checked against all asymmetric units.
+//---------------------------------------------------------------------------------------------
+Action::RetType Action_XtalSymm::BuildAsuGrid()
+{
+  int i, j, k, ii, jj, kk, m;
+
+  int prevOpID = 0;
+  double prevTx = 0.0;
+  double prevTy = 0.0;
+  double prevTz = 0.0;
+  Matrix_3x3 Rmat;
+  AsuGrid = new TransOp[7077888];
+  for (i = 0; i < 192; i++) {
+    for (j = 0; j < 192; j++) {
+      for (k = 0; k < 192; k++) {
+
+        // First, select a point in the middle of the grid bin and find its ASU.
+        double ptx = ((double)i + 0.5)/192.0;
+        double pty = ((double)j + 0.5)/192.0;
+        double ptz = ((double)k + 0.5)/192.0;
+        Vec3 pt = Vec3(ptx + prevTx, pty + prevTy, ptz + prevTz);
+        pt = pt - T[prevOpID];
+        Rmat = Matrix_3x3(R[prevOpID]);
+        Rmat.Transpose();
+        pt = Rmat * pt;
+        bool success = PointInPrimaryASU(pt[0], pt[1], pt[2]);
+        if (!success) {
+          for (ii = -1; ii <= 1; ii++) {
+            for (jj = -1; jj <= 1; jj++) {
+              for (kk = -1; kk <= 1; kk++) {
+                for (m = 0; m < nops; m++) {
+                  Rmat = Matrix_3x3(R[m]);
+                  pt = Vec3(ptx + (double)ii, pty + (double)jj, ptz + (double)kk);
+                  pt = pt - T[m];
+                  pt = Rmat * pt;
+                  if (PointInPrimaryASU(pt[0], pt[1], pt[2])) {
+
+                    // This is a solution, break out of all loops
+                    prevOpID = m;
+                    prevTx = (double)ii;
+                    prevTy = (double)jj;
+                    prevTz = (double)kk;
+                    ii = 2;
+                    jj = 2;
+                    kk = 2;
+                    m = nops;
+                  }
+                }
+              }
+            }
+          }
+        }
+        bool complete = true;
+        for (ii = 0; ii < 2; ii++) {
+          for (jj = 0; jj < 2; jj++) {
+            for (kk = 0; kk < 2; kk++) {
+              pt = Vec3(ptx + (double)ii/192.0 + prevTx, pty + (double)jj/192.0 + prevTy,
+                        ptz + (double)kk/192.0 + prevTz);
+              pt = pt - T[prevOpID];
+              pt = Rmat * pt;
+              if (PointInPrimaryASU(pt[0], pt[1], pt[2]) == false) {
+                complete = false;
+                ii = 2;
+                jj = 2;
+                kk = 2;
+              }
+            }
+          }
+        }
+
+        // Record the result
+        int idx = i*36864 + 192*j + k;
+        if (complete) {
+          AsuGrid[idx].opID = prevOpID;
+          AsuGrid[idx].tr_x = prevTx;
+          AsuGrid[idx].tr_y = prevTy;
+          AsuGrid[idx].tr_z = prevTz;
+        }
+        else {
+          AsuGrid[idx].opID = -1;
+          AsuGrid[idx].tr_x = 0.0;
+          AsuGrid[idx].tr_y = 0.0;
+          AsuGrid[idx].tr_z = 0.0;
+        }
+      }
+    }
+  }
+}
+
+//---------------------------------------------------------------------------------------------
 // Action_XtalSymm::Setup()
 //---------------------------------------------------------------------------------------------
 Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
@@ -313,6 +409,28 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
     else {
       rotIdentity[i] = false;
     }
+  }
+
+  // Create a lookup table to help determine ASUs for loose particles
+  if (allToFirstASU_) {
+
+    // CHECK
+    printf("Start calculating grid.\n");
+    // END CHECK
+    
+    BuildAsuGrid();
+    
+    // CHECK
+    for (i = 92; i < 100; i++) {
+      for (j = 92; j < 100; j++) {
+        for (k = 92; k < 100; k++) {
+          printf("%d ", AsuGrid[i*192*192 + j*192 + k].opID);
+        }
+        printf("\n");
+      }
+      printf("\n");
+    }
+    // END CHECK
   }
   
   return Action::OK;
@@ -530,9 +648,9 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
             if (trmsd < bestRmsd + 0.1) {
               double torig = 0.0;
               for (j = 0; j < nops; j++) {
-		Vec3 dsp = U * leads[HowToGetThere[j]].displc;
-		torig += dsp[0]*dsp[0] + dsp[1]*dsp[1] + dsp[2]*dsp[2];
-	      }
+                Vec3 dsp = U * leads[HowToGetThere[j]].displc;
+                torig += dsp[0]*dsp[0] + dsp[1]*dsp[1] + dsp[2]*dsp[2];
+              }
               torig += trOvec[0]*trOvec[0] + trOvec[1]*trOvec[1]+ trOvec[2]*trOvec[2];
               if (torig < bestOrig) {
                 bestRmsd = trmsd;
@@ -622,6 +740,9 @@ Action_XtalSymm::~Action_XtalSymm()
   delete[] T;
   delete[] RefT;
   delete[] rotIdentity;
+  if (allToFirstASU_) {
+    delete[] AsuGrid;
+  }
 }
 
 //---------------------------------------------------------------------------------------------
@@ -656,6 +777,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
         double dk = (double)k;
         int iuc = (i*nCopyB + j)*nCopyC + k;
         if (spaceGrp.compare("P1") == 0) {
+          sgID = 0;
           nops = 1 * nCopyA * nCopyB * nCopyC;
           iuc *= 1;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -666,6 +788,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-1") == 0) {
+          sgID = 1;
           nops = 2 * nCopyA * nCopyB * nCopyC;
           iuc *= 2;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -682,6 +805,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2") == 0) {
+          sgID = 2;
           nops = 2 * nCopyA * nCopyB * nCopyC;
           iuc *= 2;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -698,6 +822,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2(1)") == 0) {
+          sgID = 3;
           nops = 2 * nCopyA * nCopyB * nCopyC;
           iuc *= 2;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -714,6 +839,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("C2") == 0) {
+          sgID = 4;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -742,6 +868,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pm") == 0) {
+          sgID = 5;
           nops = 2 * nCopyA * nCopyB * nCopyC;
           iuc *= 2;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -758,6 +885,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pc") == 0) {
+          sgID = 6;
           nops = 2 * nCopyA * nCopyB * nCopyC;
           iuc *= 2;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -774,6 +902,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cm") == 0) {
+          sgID = 7;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -802,6 +931,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cc") == 0) {
+          sgID = 8;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -830,6 +960,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2/m") == 0) {
+          sgID = 9;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -858,6 +989,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2(1)/m") == 0) {
+          sgID = 10;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -886,6 +1018,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("C2/m") == 0) {
+          sgID = 11;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -938,6 +1071,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2/c") == 0) {
+          sgID = 12;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -966,6 +1100,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2(1)/c") == 0) {
+          sgID = 13;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -994,6 +1129,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("C2/c") == 0) {
+          sgID = 14;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1046,6 +1182,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P222") == 0) {
+          sgID = 15;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1074,6 +1211,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P222(1)") == 0) {
+          sgID = 16;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1102,6 +1240,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2(1)22_NSO") == 0) {
+          sgID = 17;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1130,6 +1269,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2(1)2(1)2") == 0) {
+          sgID = 18;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1158,6 +1298,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2(1)2(1)2_NSO") == 0) {
+          sgID = 19;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1186,6 +1327,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2(1)2(1)2(1)") == 0) {
+          sgID = 20;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1214,6 +1356,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("C222(1)") == 0) {
+          sgID = 21;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1266,6 +1409,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("C222") == 0) {
+          sgID = 22;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1318,6 +1462,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("F222") == 0) {
+          sgID = 23;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1418,6 +1563,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I222") == 0) {
+          sgID = 24;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1470,6 +1616,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I2(1)2(1)2(1)") == 0) {
+          sgID = 25;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1522,6 +1669,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pmm2") == 0) {
+          sgID = 26;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1550,6 +1698,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pmc2(1)") == 0) {
+          sgID = 27;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1578,6 +1727,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pcc2") == 0) {
+          sgID = 28;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1606,6 +1756,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pma2") == 0) {
+          sgID = 29;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1634,6 +1785,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pca2(1)") == 0) {
+          sgID = 30;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1662,6 +1814,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pnc2") == 0) {
+          sgID = 31;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1690,6 +1843,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pmn2(1)") == 0) {
+          sgID = 32;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1718,6 +1872,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pba2") == 0) {
+          sgID = 33;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1746,6 +1901,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pna2(1)") == 0) {
+          sgID = 34;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1774,6 +1930,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pnn2") == 0) {
+          sgID = 35;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1802,6 +1959,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cmm2") == 0) {
+          sgID = 36;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1854,6 +2012,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cmc2(1)") == 0) {
+          sgID = 37;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1906,6 +2065,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Ccc2") == 0) {
+          sgID = 38;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -1958,6 +2118,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Amm2") == 0) {
+          sgID = 39;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2010,6 +2171,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Abm2") == 0) {
+          sgID = 40;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2062,6 +2224,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Ama2") == 0) {
+          sgID = 41;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2114,6 +2277,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Aba2") == 0) {
+          sgID = 42;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2166,6 +2330,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Fmm2") == 0) {
+          sgID = 43;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2266,6 +2431,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Fdd2") == 0) {
+          sgID = 44;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2366,6 +2532,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Imm2") == 0) {
+          sgID = 45;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2418,6 +2585,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Iba2") == 0) {
+          sgID = 46;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2470,6 +2638,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Ima2") == 0) {
+          sgID = 47;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2522,6 +2691,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pmmm") == 0) {
+          sgID = 48;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2574,6 +2744,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pnnn") == 0) {
+          sgID = 49;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2626,6 +2797,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pccm") == 0) {
+          sgID = 50;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2678,6 +2850,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pban") == 0) {
+          sgID = 51;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2730,6 +2903,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pmma") == 0) {
+          sgID = 52;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2782,6 +2956,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pnna") == 0) {
+          sgID = 53;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2834,6 +3009,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pmna") == 0) {
+          sgID = 54;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2886,6 +3062,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pcca") == 0) {
+          sgID = 55;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2938,6 +3115,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pbam") == 0) {
+          sgID = 56;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -2990,6 +3168,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pccn") == 0) {
+          sgID = 57;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3042,6 +3221,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pbcm") == 0) {
+          sgID = 58;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3094,6 +3274,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pnnm") == 0) {
+          sgID = 59;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3146,6 +3327,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pmmn") == 0) {
+          sgID = 60;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3198,6 +3380,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pmmn_NSO") == 0) {
+          sgID = 61;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3250,6 +3433,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pbcn") == 0) {
+          sgID = 62;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3302,6 +3486,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pbca") == 0) {
+          sgID = 63;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3354,6 +3539,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pnma") == 0) {
+          sgID = 64;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3406,6 +3592,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cmcm") == 0) {
+          sgID = 65;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3506,6 +3693,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cmca") == 0) {
+          sgID = 66;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3606,6 +3794,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cmmm") == 0) {
+          sgID = 67;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3706,6 +3895,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cccm") == 0) {
+          sgID = 68;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3806,6 +3996,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Cmma") == 0) {
+          sgID = 69;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -3906,6 +4097,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Ccca") == 0) {
+          sgID = 70;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4006,6 +4198,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Fmmm") == 0) {
+          sgID = 71;
           nops = 32 * nCopyA * nCopyB * nCopyC;
           iuc *= 32;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4202,6 +4395,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Fddd") == 0) {
+          sgID = 72;
           nops = 32 * nCopyA * nCopyB * nCopyC;
           iuc *= 32;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4398,6 +4592,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Immm") == 0) {
+          sgID = 73;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4498,6 +4693,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Ibam") == 0) {
+          sgID = 74;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4598,6 +4794,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Ibca") == 0) {
+          sgID = 75;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4698,6 +4895,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Imma") == 0) {
+          sgID = 76;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4798,6 +4996,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4") == 0) {
+          sgID = 77;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4826,6 +5025,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(1)") == 0) {
+          sgID = 78;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4854,6 +5054,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.7500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)") == 0) {
+          sgID = 79;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4882,6 +5083,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(3)") == 0) {
+          sgID = 80;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4910,6 +5112,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4") == 0) {
+          sgID = 81;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -4962,6 +5165,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4(1)") == 0) {
+          sgID = 82;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5014,6 +5218,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-4") == 0) {
+          sgID = 83;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5042,6 +5247,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I-4") == 0) {
+          sgID = 84;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5094,6 +5300,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/m") == 0) {
+          sgID = 85;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5146,6 +5353,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/m") == 0) {
+          sgID = 86;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5198,6 +5406,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/n") == 0) {
+          sgID = 87;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5250,6 +5459,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/n") == 0) {
+          sgID = 88;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5302,6 +5512,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4/m") == 0) {
+          sgID = 89;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5402,6 +5613,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4(1)/a") == 0) {
+          sgID = 90;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5502,6 +5714,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P422") == 0) {
+          sgID = 91;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5554,6 +5767,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P42(1)2") == 0) {
+          sgID = 92;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5606,6 +5820,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(1)22") == 0) {
+          sgID = 93;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5658,6 +5873,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(1)2(1)2") == 0) {
+          sgID = 94;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5710,6 +5926,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)22") == 0) {
+          sgID = 95;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5762,6 +5979,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)2(1)2") == 0) {
+          sgID = 96;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5814,6 +6032,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(3)22") == 0) {
+          sgID = 97;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5866,6 +6085,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.7500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(3)2(1)2") == 0) {
+          sgID = 98;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -5918,6 +6138,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I422") == 0) {
+          sgID = 99;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6018,6 +6239,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4(1)22") == 0) {
+          sgID = 100;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6118,6 +6340,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4mm") == 0) {
+          sgID = 101;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6170,6 +6393,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4bm") == 0) {
+          sgID = 102;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6222,6 +6446,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)cm") == 0) {
+          sgID = 103;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6274,6 +6499,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)nm") == 0) {
+          sgID = 104;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6326,6 +6552,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4cc") == 0) {
+          sgID = 105;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6378,6 +6605,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4nc") == 0) {
+          sgID = 106;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6430,6 +6658,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)mc") == 0) {
+          sgID = 107;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6482,6 +6711,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)bc") == 0) {
+          sgID = 108;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6534,6 +6764,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4mm") == 0) {
+          sgID = 109;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6634,6 +6865,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4cm") == 0) {
+          sgID = 110;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6734,6 +6966,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4(1)md") == 0) {
+          sgID = 111;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6834,6 +7067,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4(1)cd") == 0) {
+          sgID = 112;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6934,6 +7168,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.7500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-42m") == 0) {
+          sgID = 113;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -6986,6 +7221,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-42c") == 0) {
+          sgID = 114;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7038,6 +7274,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-42(1)m") == 0) {
+          sgID = 115;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7090,6 +7327,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-42(1)c") == 0) {
+          sgID = 116;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7142,6 +7380,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-4m2") == 0) {
+          sgID = 117;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7194,6 +7433,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-4c2") == 0) {
+          sgID = 118;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7246,6 +7486,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-4b2") == 0) {
+          sgID = 119;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7298,6 +7539,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-4n2") == 0) {
+          sgID = 120;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7350,6 +7592,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I-4m2") == 0) {
+          sgID = 121;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7450,6 +7693,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I-4c2") == 0) {
+          sgID = 122;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7550,6 +7794,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I-42m") == 0) {
+          sgID = 123;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7650,6 +7895,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I-42d") == 0) {
+          sgID = 124;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7750,6 +7996,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/mmm") == 0) {
+          sgID = 125;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7850,6 +8097,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/mcc") == 0) {
+          sgID = 126;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -7950,6 +8198,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/nbm") == 0) {
+          sgID = 127;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8050,6 +8299,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/nnc") == 0) {
+          sgID = 128;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8150,6 +8400,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/mbm") == 0) {
+          sgID = 129;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8250,6 +8501,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/mnc") == 0) {
+          sgID = 130;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8350,6 +8602,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/nmm") == 0) {
+          sgID = 131;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8450,6 +8703,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4/ncc") == 0) {
+          sgID = 132;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8550,6 +8804,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/mmc") == 0) {
+          sgID = 133;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8650,6 +8905,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/mcm") == 0) {
+          sgID = 134;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8750,6 +9006,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/nbc") == 0) {
+          sgID = 135;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8850,6 +9107,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/nnm") == 0) {
+          sgID = 136;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -8950,6 +9208,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/mbc") == 0) {
+          sgID = 137;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -9050,6 +9309,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/mnm") == 0) {
+          sgID = 138;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -9150,6 +9410,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/nmc") == 0) {
+          sgID = 139;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -9250,6 +9511,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)/ncm") == 0) {
+          sgID = 140;
           nops = 16 * nCopyA * nCopyB * nCopyC;
           iuc *= 16;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -9350,6 +9612,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4/mmm") == 0) {
+          sgID = 141;
           nops = 32 * nCopyA * nCopyB * nCopyC;
           iuc *= 32;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -9546,6 +9809,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4/mcm") == 0) {
+          sgID = 142;
           nops = 32 * nCopyA * nCopyB * nCopyC;
           iuc *= 32;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -9742,6 +10006,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4(1)/amd") == 0) {
+          sgID = 143;
           nops = 32 * nCopyA * nCopyB * nCopyC;
           iuc *= 32;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -9938,6 +10203,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.7500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4(1)/acd") == 0) {
+          sgID = 144;
           nops = 32 * nCopyA * nCopyB * nCopyC;
           iuc *= 32;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10134,6 +10400,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3") == 0) {
+          sgID = 145;
           nops = 3 * nCopyA * nCopyB * nCopyC;
           iuc *= 3;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10156,6 +10423,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3(1)") == 0) {
+          sgID = 146;
           nops = 3 * nCopyA * nCopyB * nCopyC;
           iuc *= 3;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10178,6 +10446,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3(2)") == 0) {
+          sgID = 147;
           nops = 3 * nCopyA * nCopyB * nCopyC;
           iuc *= 3;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10200,6 +10469,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.3333333333 + dk) / dnC);
         }
         else if (spaceGrp.compare("R3") == 0) {
+          sgID = 148;
           nops = 9 * nCopyA * nCopyB * nCopyC;
           iuc *= 9;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10258,6 +10528,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-3") == 0) {
+          sgID = 149;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10298,6 +10569,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("R-3") == 0) {
+          sgID = 150;
           nops = 18 * nCopyA * nCopyB * nCopyC;
           iuc *= 18;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10410,6 +10682,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P312") == 0) {
+          sgID = 151;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10450,6 +10723,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P321") == 0) {
+          sgID = 152;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10490,6 +10764,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3(1)12") == 0) {
+          sgID = 153;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10530,6 +10805,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3(1)21") == 0) {
+          sgID = 154;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10570,6 +10846,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.3333333333 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3(2)12") == 0) {
+          sgID = 155;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10610,6 +10887,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3(2)21") == 0) {
+          sgID = 156;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10650,6 +10928,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("R32") == 0) {
+          sgID = 157;
           nops = 18 * nCopyA * nCopyB * nCopyC;
           iuc *= 18;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10762,6 +11041,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3m1") == 0) {
+          sgID = 158;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10802,6 +11082,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P31m") == 0) {
+          sgID = 159;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10842,6 +11123,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P3c1") == 0) {
+          sgID = 160;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10882,6 +11164,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P31c") == 0) {
+          sgID = 161;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -10922,6 +11205,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("R3m") == 0) {
+          sgID = 162;
           nops = 18 * nCopyA * nCopyB * nCopyC;
           iuc *= 18;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11034,6 +11318,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("R3c") == 0) {
+          sgID = 163;
           nops = 18 * nCopyA * nCopyB * nCopyC;
           iuc *= 18;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11146,6 +11431,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.1666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-31m") == 0) {
+          sgID = 164;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11222,6 +11508,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-31c") == 0) {
+          sgID = 165;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11298,6 +11585,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-3m1") == 0) {
+          sgID = 166;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11374,6 +11662,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-3c1") == 0) {
+          sgID = 167;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11450,6 +11739,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("R-3m") == 0) {
+          sgID = 168;
           nops = 36 * nCopyA * nCopyB * nCopyC;
           iuc *= 36;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11670,6 +11960,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("R-3c") == 0) {
+          sgID = 169;
           nops = 36 * nCopyA * nCopyB * nCopyC;
           iuc *= 36;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11890,6 +12181,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.1666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6") == 0) {
+          sgID = 170;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11930,6 +12222,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(1)") == 0) {
+          sgID = 171;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -11970,6 +12263,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.1666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(5)") == 0) {
+          sgID = 172;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12010,6 +12304,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.8333333333 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(2)") == 0) {
+          sgID = 173;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12050,6 +12345,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.3333333333 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(4)") == 0) {
+          sgID = 174;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12090,6 +12386,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(3)") == 0) {
+          sgID = 175;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12130,6 +12427,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-6") == 0) {
+          sgID = 176;
           nops = 6 * nCopyA * nCopyB * nCopyC;
           iuc *= 6;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12170,6 +12468,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6/m") == 0) {
+          sgID = 177;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12246,6 +12545,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(3)/m") == 0) {
+          sgID = 178;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12322,6 +12622,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P622") == 0) {
+          sgID = 179;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12398,6 +12699,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(1)22") == 0) {
+          sgID = 180;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12474,6 +12776,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.1666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(5)22") == 0) {
+          sgID = 181;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12550,6 +12853,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.8333333333 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(2)22") == 0) {
+          sgID = 182;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12626,6 +12930,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.3333333333 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(4)22") == 0) {
+          sgID = 183;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12702,6 +13007,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.6666666667 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(3)22") == 0) {
+          sgID = 184;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12778,6 +13084,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6mm") == 0) {
+          sgID = 185;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12854,6 +13161,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6cc") == 0) {
+          sgID = 186;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -12930,6 +13238,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(3)cm") == 0) {
+          sgID = 187;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13006,6 +13315,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(3)mc") == 0) {
+          sgID = 188;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13082,6 +13392,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-6m2") == 0) {
+          sgID = 189;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13158,6 +13469,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-6c2") == 0) {
+          sgID = 190;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13234,6 +13546,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-62m") == 0) {
+          sgID = 191;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13310,6 +13623,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-62c") == 0) {
+          sgID = 192;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13386,6 +13700,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6/mmm") == 0) {
+          sgID = 193;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13534,6 +13849,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6/mcc") == 0) {
+          sgID = 194;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13682,6 +13998,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(3)/mcm") == 0) {
+          sgID = 195;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13830,6 +14147,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P6(3)/mmc") == 0) {
+          sgID = 196;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -13978,6 +14296,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P23") == 0) {
+          sgID = 197;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -14054,6 +14373,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("F23") == 0) {
+          sgID = 198;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -14346,6 +14666,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I23") == 0) {
+          sgID = 199;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -14494,6 +14815,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P2(1)3") == 0) {
+          sgID = 200;
           nops = 12 * nCopyA * nCopyB * nCopyC;
           iuc *= 12;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -14570,6 +14892,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I2(1)3") == 0) {
+          sgID = 201;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -14718,6 +15041,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pm-3") == 0) {
+          sgID = 202;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -14866,6 +15190,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pn-3") == 0) {
+          sgID = 203;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -15014,6 +15339,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Fm-3") == 0) {
+          sgID = 204;
           nops = 96 * nCopyA * nCopyB * nCopyC;
           iuc *= 96;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -15594,6 +15920,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Fd-3") == 0) {
+          sgID = 205;
           nops = 96 * nCopyA * nCopyB * nCopyC;
           iuc *= 96;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -16174,6 +16501,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Im-3") == 0) {
+          sgID = 206;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -16466,6 +16794,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pa-3") == 0) {
+          sgID = 207;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -16614,6 +16943,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Ia-3") == 0) {
+          sgID = 208;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -16906,6 +17236,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P432") == 0) {
+          sgID = 209;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -17054,6 +17385,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(2)32") == 0) {
+          sgID = 210;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -17202,6 +17534,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("F432") == 0) {
+          sgID = 211;
           nops = 96 * nCopyA * nCopyB * nCopyC;
           iuc *= 96;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -17782,6 +18115,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("F4(1)32") == 0) {
+          sgID = 212;
           nops = 96 * nCopyA * nCopyB * nCopyC;
           iuc *= 96;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -18362,6 +18696,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I432") == 0) {
+          sgID = 213;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -18654,6 +18989,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(3)32") == 0) {
+          sgID = 214;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -18802,6 +19138,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P4(1)32") == 0) {
+          sgID = 215;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -18950,6 +19287,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.7500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I4(1)32") == 0) {
+          sgID = 216;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -19242,6 +19580,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-43m") == 0) {
+          sgID = 217;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -19390,6 +19729,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("F4-3m") == 0) {
+          sgID = 218;
           nops = 96 * nCopyA * nCopyB * nCopyC;
           iuc *= 96;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -19970,6 +20310,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I-43m") == 0) {
+          sgID = 219;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -20262,6 +20603,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("P-43n") == 0) {
+          sgID = 220;
           nops = 24 * nCopyA * nCopyB * nCopyC;
           iuc *= 24;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -20410,6 +20752,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("F-43c") == 0) {
+          sgID = 221;
           nops = 96 * nCopyA * nCopyB * nCopyC;
           iuc *= 96;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -20990,6 +21333,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("I-43d") == 0) {
+          sgID = 222;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -21282,6 +21626,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.2500000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pm-3m") == 0) {
+          sgID = 223;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -21574,6 +21919,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pn-3n") == 0) {
+          sgID = 224;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -21866,6 +22212,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.0000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pm-3n") == 0) {
+          sgID = 225;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -22158,6 +22505,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
                               (  0.5000000000 + dk) / dnC);
         }
         else if (spaceGrp.compare("Pn-3m") == 0) {
+          sgID = 226;
           nops = 48 * nCopyA * nCopyB * nCopyC;
           iuc *= 48;
           Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
@@ -22456,4 +22804,1053 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
     }
   }
   return Action::OK;
+}
+
+//---------------------------------------------------------------------------------------------
+// dmin: Various functions for overloading the min function from the std library
+//---------------------------------------------------------------------------------------------
+double Action_XtalSymm::dmin(double a, double b)
+{
+  if (a < b) {
+    return a;
+  }
+  else {
+    return b;
+  }
+}
+
+double Action_XtalSymm::dmin(double a, double b, double c)
+{
+  if (a < b) {
+    if (a < c) {
+      return a;
+    }
+    else {
+      return c;
+    }
+  }
+  else {
+    if (b < c) {
+      return b;
+    }
+    else {
+      return c;
+    }
+  }
+}
+
+double Action_XtalSymm::dmin(double a, double b, double c, double d)
+{
+  double ab = dmin(a, b);
+  double cd = dmin(c, d);
+
+  return dmin(ab, cd);
+}
+
+//---------------------------------------------------------------------------------------------
+// dmax: Various functions for overloading the min function from the std library
+//---------------------------------------------------------------------------------------------
+double Action_XtalSymm::dmax(double a, double b)
+{
+  if (a > b) {
+    return a;
+  }
+  else {
+    return b;
+  }
+}
+
+double Action_XtalSymm::dmax(double a, double b, double c)
+{
+  if (a > b) {
+    if (a > c) {
+      return a;
+    }
+    else {
+      return c;
+    }
+  }
+  else {
+    if (b > c) {
+      return b;
+    }
+    else {
+      return c;
+    }
+  }
+}
+
+double Action_XtalSymm::dmax(double a, double b, double c, double d)
+{
+  double ab = dmax(a, b);
+  double cd = dmax(c, d);
+
+  return dmax(ab, cd);
+}
+
+//---------------------------------------------------------------------------------------------
+// PointInPrimaryASU: function for determining whether a given point lies within the primary
+//                    asymmetric unit as defined by the space group's geometry.
+//
+// Arguments:
+//   [x,y,z]:    the fractional coordinates of the point
+//---------------------------------------------------------------------------------------------
+bool Action_XtalSymm::PointInPrimaryASU(double x, double y, double z)
+{
+  const double twothr  = 0.66666666666667;
+  const double half    = 0.5;
+  const double threig  = 0.375;
+  const double third   = 0.33333333333333;
+  const double fourth  = 0.25;
+  const double sixth   = 0.16666666666667;
+  const double eighth  = 0.125;
+  const double twelfth = 0.83333333333333;
+  bool result = true;
+
+  // Scale the coordinates by the number of times the unit cell has been replicated.
+  x *= (double)nCopyA;
+  y *= (double)nCopyB;
+  z *= (double)nCopyC;
+
+  // Giant case switch to test each space group
+  switch(sgID) {
+    case 0:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > 1.0) return false;
+      break;
+    case 1:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > 1.0) return false;
+      break;
+    case 2:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > half) return false;
+      break;
+    case 3:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > half) return false;
+      break;
+    case 4:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 5:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 6:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 7:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 8:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 9:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 10:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 11:
+      if (0.0 > x || x > half || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 12:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > half) return false;
+      break;
+    case 13:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 14:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 15:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 16:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 17:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 18:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+    case 19:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 20:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 21:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 22:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 23:
+      if (0.0 > x || x > fourth || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 24:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 25:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 26:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 27:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 28:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 29:
+      if (0.0 > x || x > fourth || 0.0 > y || y > 1.0 || 0.0 > z || z > 1.0) return false;
+      break;
+    case 30:
+      if (0.0 > x || x > fourth || 0.0 > y || y > 1.0 || 0.0 > z || z > 1.0) return false;
+      break;
+    case 31:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > half) return false;
+      break;
+    case 32:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 33:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 34:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 35:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 36:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 37:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 38:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 39:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 40:
+      if (0.0 > x || x > half || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 41:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 42:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 43:
+      if (0.0 > x || x > fourth || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 44:
+      if (0.0 > x || x > fourth || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 45:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 46:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 47:
+      if (0.0 > x || x > fourth || 0.0 > y || y > 1.0 || 0.0 > z || z > half) return false;
+      break;
+    case 48:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 49:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 50:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 51:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 52:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 53:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > fourth || 0.0 > z || z > half) return false;
+      break;
+    case 54:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > fourth) return false;
+      break;
+    case 55:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 56:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 57:
+      if (0.0 > x || x > fourth || 0.0 > y || y > 1.0 || 0.0 > z || z > half) return false;
+      break;
+    case 58:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > fourth) return false;
+      break;
+    case 59:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 60:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 61:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 62:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 63:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 64:
+      if (0.0 > x || x > half || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 65:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 66:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 67:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 68:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 69:
+      if (0.0 > x || x > half || 0.0 > y || y > fourth || 0.0 > z || z > half) return false;
+      break;
+    case 70:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 71:
+      if (0.0 > x || x > fourth || 0.0 > y || y > fourth || 0.0 > z || z > half) return false;
+      break;
+    case 72:
+      if (0.0 > x || x > eighth || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 73:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 74:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 75:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 76:
+      if (0.0 > x || x > fourth || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 77:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 78:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 79:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 80:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 81:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 82:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > fourth) return false;
+      break;
+    case 83:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0) return false;
+      break;
+    case 84:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 85:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 86:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 87:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 88:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > fourth) return false;
+      break;
+    case 89:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 90:
+      if (0.0 > x || x > fourth || 0.0 > y || y > fourth || 0.0 > z || z > 1.0) return false;
+      break;
+    case 91:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 92:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 93:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > eighth) return false;
+      break;
+    case 94:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > eighth) return false;
+      break;
+    case 95:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > fourth) return false;
+      break;
+    case 96:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 97:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > eighth) return false;
+      break;
+    case 98:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > eighth) return false;
+      break;
+    case 99:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 100:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > eighth) return false;
+      break;
+    case 101:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0 || x > y) {
+        return false;
+      }
+      break;
+    case 102:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0 || y > half-x) {
+        return false;
+      }
+      break;
+    case 103:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0 || x > y) {
+        return false;
+      }
+      break;
+    case 104:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0 || x > y) {
+        return false;
+      }
+      break;
+    case 105:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 106:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 107:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 108:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 109:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || x > y) {
+        return false;
+      }
+      break;
+    case 110:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || y > half-x) {
+        return false;
+      }
+      break;
+    case 111:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 112:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 113:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0 || x > y) {
+        return false;
+      }
+      break;
+    case 114:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 115:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > 1.0 || y > half-x) {
+        return false;
+      }
+      break;
+    case 116:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 117:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 118:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > fourth) return false;
+      break;
+    case 119:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half) return false;
+      break;
+    case 120:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > fourth) return false;
+      break;
+    case 121:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 122:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 123:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || x > y) {
+        return false;
+      }
+      break;
+    case 124:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > eighth) return false;
+      break;
+    case 125:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || x > y) {
+        return false;
+      }
+      break;
+    case 126:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 127:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || y > half-x) {
+        return false;
+      }
+      break;
+    case 128:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 129:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || y > half-x) {
+        return false;
+      }
+      break;
+    case 130:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 131:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || y > half-x) {
+        return false;
+      }
+      break;
+    case 132:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 133:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 134:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || x > y) {
+        return false;
+      }
+      break;
+    case 135:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 136:
+      if (0.0 > x || x > half || 0.0 > y || y > 1.0 || 0.0 > z || z > fourth || x > y ||
+          y > 1.0-x) {
+        return false;
+      }
+      break;
+    case 137:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 138:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || x > y) {
+        return false;
+      }
+      break;
+    case 139:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth) return false;
+      break;
+    case 140:
+      if (0.0 > x || x > fourth || 0.0 > y || y > half || 0.0 > z || z > 1.0 || x > y ||
+          y > half-x) {
+        return false;
+      }
+      break;
+    case 141:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth || x > y) {
+        return false;
+      }
+      break;
+    case 142:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth ||
+          y > half-x) {
+        return false;
+      }
+      break;
+    case 143:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > eighth) return false;
+      break;
+    case 144:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > eighth) return false;
+      break;
+    case 145:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > 1.0 ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 146:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > third) return false;
+      break;
+    case 147:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > third) return false;
+      break;
+    case 148:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > third ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 149:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 150:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > sixth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 151:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 152:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 153:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > sixth) return false;
+      break;
+    case 154:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > sixth) return false;
+      break;
+    case 155:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > sixth) return false;
+      break;
+    case 156:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > sixth) return false;
+      break;
+    case 157:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > sixth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 158:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > 1.0 ||
+          x > 2.0*y || y > dmin(1.0-x, 2.0*x)) {
+        return false;
+      }
+      break;
+    case 159:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > 1.0 ||
+          x > (y+1.0)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 160:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 161:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 162:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > third ||
+          x > 2.0*y || y > dmin(1.0-x, 2.0*x)) {
+        return false;
+      }
+      break;
+    case 163:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > sixth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 164:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 165:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > fourth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 166:
+      if (0.0 > x || x > twothr || 0.0 > y || y > third || 0.0 > z || z > 1.0 ||
+          x > (1.0+y)/2.0 || y > x/2.0) {
+        return false;
+      }
+      break;
+    case 167:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > fourth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 168:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > sixth ||
+          x > 2.0*y || y > dmin(1.0-x, 2.0*x)) {
+        return false;
+      }
+      break;
+    case 169:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > twelfth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 170:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > 1.0 ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 171:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > sixth) return false;
+      break;
+    case 172:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > sixth) return false;
+      break;
+    case 173:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > third || y > x) {
+        return false;
+      }
+      break;
+    case 174:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > third || y > x) {
+        return false;
+      }
+      break;
+    case 175:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 176:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 177:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 178:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > fourth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 179:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 180:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > twelfth) return false;
+      break;
+    case 181:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > twelfth) return false;
+      break;
+    case 182:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > sixth || y > x) {
+        return false;
+      }
+      break;
+    case 183:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > sixth || y > x) {
+        return false;
+      }
+      break;
+    case 184:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > fourth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 185:
+      if (0.0 > x || x > twothr || 0.0 > y || y > third || 0.0 > z || z > 1.0 ||
+          x > (1.0+y)/2.0 || y > x/2.0) {
+        return false;
+      }
+      break;
+    case 186:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 187:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 188:
+      if (0.0 > x || x > twothr || 0.0 > y || y > third || 0.0 > z || z > 1.0 ||
+          x > (1.0+y)/2.0 || y > x/2.0) {
+        return false;
+      }
+      break;
+    case 189:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > half ||
+          x > 2.0*y || y > dmin(1.0-x, 2.0*x)) {
+        return false;
+      }
+      break;
+    case 190:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > fourth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 191:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 192:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > fourth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, (1.0+x)/2.0)) {
+        return false;
+      }
+      break;
+    case 193:
+      if (0.0 > x || x > twothr || 0.0 > y || y > third || 0.0 > z || z > half ||
+          x > (1.0+y)/2.0 || y > x/2.0) {
+        return false;
+      }
+      break;
+    case 194:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > fourth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 195:
+      if (0.0 > x || x > twothr || 0.0 > y || y > half || 0.0 > z || z > fourth ||
+          x > (1.0+y)/2.0 || y > dmin(1.0-x, x)) {
+        return false;
+      }
+      break;
+    case 196:
+      if (0.0 > x || x > twothr || 0.0 > y || y > twothr || 0.0 > z || z > fourth ||
+          x > 2.0*y || y > dmin(1.0-x, 2.0*x)) {
+        return false;
+      }
+      break;
+    case 197:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > 1.0 || 0.0 > z || z > half || y > 1.0-x ||
+          z > dmin(x, y)) {
+        return false;
+      }
+      break;
+    case 198:
+      if (0.0 > x || x > half || 0.0 > y || y > half || -fourth > z || z > fourth ||
+          y > x || dmax(x-half, -y) > z || z > dmin(half-x, y)) {
+        return false;
+      }
+      break;
+    case 199:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > half || 0.0 > z || z > half ||
+          y > dmin(x, 1.0-x) || z > y) {
+        return false;
+      }
+      break;
+    case 200:
+      if (0.0 > x || x > half || 0.0 > y || y > half || -half > z || z > half ||
+          dmax(x-half, -y) > z || z > dmin(x, y)) {
+        return false;
+      }
+      break;
+    case 201:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half ||
+          z > dmin(x, y)) {
+        return false;
+      }
+      break;
+    case 202:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half ||
+          z > dmin(x, y)) {
+        return false;
+      }
+      break;
+    case 203:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > half || 0.0 > z || z > half ||
+          y > dmin(x, 1.0-x) || z > y) {
+        return false;
+      }
+      break;
+    case 204:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth || y > x ||
+          z > dmin(half-x, y)) {
+        return false;
+      }
+      break;
+    case 205:
+      if (0.0 > x || x > half || 0.0 > y || y > fourth || -fourth > z || z > fourth ||
+          y > dmin(x, half-x) || -y > z || z > y) {
+        return false;
+      }
+      break;
+    case 206:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || y > x ||
+          z > y) {
+        return false;
+      }
+      break;
+    case 207:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half ||
+          z > dmin(x, y)) {
+        return false;
+      }
+      break;
+    case 208:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth ||
+          z > dmin(x, half-x, half-y)) {
+        return false;
+      }
+      break;
+    case 209:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > half || 0.0 > z || z > half ||
+          y > dmin(x, 1.0-x) || z > y) {
+        return false;
+      }
+      break;
+    case 210:
+      if (0.0 > x || x > half || 0.0 > y || y > half || -fourth > z || z > fourth ||
+          dmax(-x, x-half, -y, y-half) > z || z > dmin(x, half-x, y, half-y)) {
+        return false;
+      }
+      break;
+    case 211:
+      if (0.0 > x || x > half || 0.0 > y || y > fourth || -fourth > z || z > fourth ||
+          y > dmin(x, half-x) || -y > z || z > y) {
+        return false;
+      }
+      break;
+    case 212:
+      if (0.0 > x || x > half || -eighth > y || y > eighth || -eighth > z || z > eighth ||
+          y > dmin(x, half-x) || -y > z || z > dmin(x, half-x)) {
+        return false;
+      }
+      break;
+    case 213:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth ||
+          z > dmin(x, half-x, y, half-y)) {
+        return false;
+      }
+      break;
+    case 214:
+      if (0.0 > x || x > half || 0.0 > y || y > 3.0/4 || -half > z || z > fourth ||
+          dmax(-y, x-half) > z || z > dmin(half-y, 2.0*x-y, 2.0*y-x, y-2.0*x+half)) {
+        return false;
+      }
+      break;
+    case 215:
+      if (-fourth > x || x > half || 0.0 > y || y > 3.0/4 || 0.0 > z || z > half ||
+          x > y || y > x+half || (y-x)/2.0 > z ||
+          z > dmin(y, (-4.0*x-2.0*y+3.0)/2.0, (3.0-2.0*x-2.0*y)/4)) {
+        return false;
+      }
+      break;
+    case 216:
+      if (-threig > x || x > eighth || -eighth > y || y > eighth || -eighth > z ||
+          z > threig || dmax(x, y, y-x-eighth) > z || z > y+fourth) {
+        return false;
+      }
+      break;
+    case 217:
+      if (0.0 > x || x > 1.0 || 0.0 > y || y > half || 0.0 > z || z > half ||
+          y > dmin(x, 1.0-x) || z > y) {
+        return false;
+      }
+      break;
+    case 218:
+      if (0.0 > x || x > half || 0.0 > y || y > fourth || -fourth > z || z > fourth ||
+          y > dmin(x, half-x) || -y > z || z > y) {
+        return false;
+      }
+      break;
+    case 219:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || y > x ||
+          z > y) {
+        return false;
+      }
+      break;
+    case 220:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half ||
+          z > dmin(x, y)) {
+        return false;
+      }
+      break;
+    case 221:
+      if (0.0 > x || x > half || 0.0 > y || y > fourth || -fourth > z || z > fourth ||
+          y > dmin(x, half-x) || -y > z || z > y) {
+        return false;
+      }
+      break;
+    case 222:
+      if (fourth > x || x > half || fourth > y || y > half || 0.0 > z || z > half ||
+          z > dmin(x, y)) {
+        return false;
+      }
+      break;
+    case 223:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || y > x ||
+          z > y) {
+        return false;
+      }
+      break;
+    case 224:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > half || y > x ||
+          z > y) {
+        return false;
+      }
+      break;
+    case 225:
+      if (0.0 > x || x > half || 0.0 > y || y > half || 0.0 > z || z > fourth ||
+          z > dmin(x, half-x, y, half-y)) {
+        return false;
+      }
+      break;
+    case 226:
+      if (0.0 > x || x > half || 0.0 > y || y > half || -fourth > z || z > fourth ||
+          y > x || dmax(x-half, -y) > z || z > dmin(half-x, y)) {
+        return false;
+      }
+      break;
+    default:
+      break;
+  }
+  
+  return result;
 }

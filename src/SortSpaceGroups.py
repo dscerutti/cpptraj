@@ -7,6 +7,7 @@ nops = 0
 grpnames = []
 symopers = []
 symbound = []
+grpcomps = []
 
 for i, ln in enumerate(fmem):
 
@@ -20,6 +21,39 @@ for i, ln in enumerate(fmem):
     while (j < len(fmem) and keepgoing):
       ttlj = fmem[j].split()
       if (len(ttlj) > 0 and ttlj[0] == "asymm="):
+
+        # Determine the rules for the primary asymmetric unit's geometric bounds
+        nrule = 1
+        rules = []
+        rlstring = ""
+        for item in ttlj:
+          if (item == "asymm="):
+            pass
+          elif (item == "and"):
+            nrule = nrule + 1
+            rules.append(rlstring)
+            rlstring = ""
+          else:
+            rlstring += item
+        rules.append(rlstring)
+        grpcomps.append([])
+        for item in rules:
+          tti = item.split("<=")
+          if (len(tti) == 2):
+            grpcomps[ngrp].append((tti[0], tti[1]));
+          elif (len(tti) == 3):
+            grpcomps[ngrp].append((tti[0], tti[1]));
+            grpcomps[ngrp].append((tti[1], tti[2]));
+          else:
+            print "Error, there are %d combined comparisons." % len(tti)
+            exit(1)
+
+        # CHECK
+        print fmem[j].split("\n")[0]
+        print grpcomps[ngrp]
+        print
+        # END CHECK
+        
         keepgoing = False
       if (len(ttlj) > 0 and ttlj[0] == "symmetry="):
         thisop = ttlj[1].split(',')
@@ -87,16 +121,7 @@ for i, ln in enumerate(fmem):
     symbound.append((nops, nops + ngops))
     ngrp = ngrp + 1
     nops = nops + ngops
-    
-    # CHECK
-#    print "Symmetry operations for %s" % grpnames[ngrp-1]
-#    for j in range(symbound[ngrp-1][0], symbound[ngrp-1][1]):
-#      for k in range(3):
-#        print "  %9.4f %9.4f %9.4f   %9.4f" % (symopers[j][4*k + 0], symopers[j][4*k + 1],
-#                                               symopers[j][4*k + 2], symopers[j][4*k + 3])
-#      print
-    # END CHECK
-    
+
 # Write out C++ code to hard-wire all of these space groups and symmetry operations
 print "//" + ("-" * 93)
 print "// LoadSpaceGroupSymOps: function for creating a list of symmetry operations based",
@@ -136,6 +161,7 @@ for i, item in enumerate(grpnames):
     print "        if (spaceGrp.compare(\"%s\") == 0) {" % item
   else:
     print "        else if (spaceGrp.compare(\"%s\") == 0) {" % item
+  print "          sgID = %d;" % i
   print "          nops = %d * nCopyA * nCopyB * nCopyC;" % (symbound[i][1] - symbound[i][0]);
   print "          iuc *= %d;" % (symbound[i][1] - symbound[i][0])
   for j in range(symbound[i][0], symbound[i][1]):
@@ -158,4 +184,101 @@ print "    }"
 print "  }"
 print "  return Action::OK;"
 print "}"
-    
+
+# Print the preamble to the asymmetric unit definitions function
+print "//" + ("-" * 93)
+print "// PointInPrimaryASU: function for determining whether a given point lies within",
+print "the primary"
+print "//                    asymmetric unit as defined by the space group's geometry."
+print "//"
+print "// Arguments:"
+print "//   [x,y,z]:    the fractional coordinates of the point"
+print "//" + ("-" * 93)
+print "bool Action_XtalSymm::PointInPrimaryASU(double x, double y, double z)"
+print "{"
+print "  const double two3 = 0.66666666666667;"
+print "  const double half = 0.5;"
+print "  const double thr8 = 0.375;"
+print "  const double third = 0.33333333333333;"
+print "  const double fourth = 0.25;"
+print "  const double sixth = 0.16666666666667;"
+print "  const double eighth = 0.125;"
+print "  const double twelfth = 0.83333333333333;"
+print "  bool result = true;"
+print "  switch(sgID) {"
+for i, item in enumerate(grpcomps):
+  print "    case %d:" % i
+  lsize = 0
+  noreset = True;
+  for j, comparison in enumerate(item):
+    lhs = comparison[0]
+    lhs = lhs.replace("2/3",  "twothr")
+    lhs = lhs.replace("1/2",  "half")
+    lhs = lhs.replace("3/8",  "threig")
+    lhs = lhs.replace("1/3",  "third")
+    lhs = lhs.replace("1/4",  "fourth")
+    lhs = lhs.replace("1/6",  "sixth")
+    lhs = lhs.replace("1/8",  "eighth")
+    lhs = lhs.replace("1/12", "twelfth")
+    lhs = lhs.replace("0", "0.0")
+    lhs = lhs.replace("1", "1.0")
+    lhs = lhs.replace("2", "2.0")
+    lhs = lhs.replace("3", "3.0")
+    lhs = lhs.replace(",", ", ")
+    lhs = lhs.replace(".0x", ".0*x")
+    lhs = lhs.replace(".0y", ".0*y")
+    lhs = lhs.replace(".0z", ".0*z")
+    lhs = lhs.replace("min", "dmin");
+    lhs = lhs.replace("max", "dmax");
+    rhs = comparison[1]
+    rhs = rhs.replace("2/3",  "twothr")
+    rhs = rhs.replace("1/2",  "half")
+    rhs = rhs.replace("3/8",  "threig")
+    rhs = rhs.replace("1/3",  "third")
+    rhs = rhs.replace("1/4",  "fourth")
+    rhs = rhs.replace("1/6",  "sixth")
+    rhs = rhs.replace("1/8",  "eighth")
+    rhs = rhs.replace("1/12", "twelfth")
+    rhs = rhs.replace("0", "0.0")
+    rhs = rhs.replace("1", "1.0")
+    rhs = rhs.replace("2", "2.0")
+    rhs = rhs.replace("3", "3.0")
+    rhs = rhs.replace(",", ", ")
+    rhs = rhs.replace(".0x", ".0*x")
+    rhs = rhs.replace(".0y", ".0*y")
+    rhs = rhs.replace(".0z", ".0*z")
+    rhs = rhs.replace("min", "dmin");
+    rhs = rhs.replace("max", "dmax");
+    if (j == 0):
+      contrib = "      if (%s > %s" % (lhs, rhs)
+      if (j < len(item) - 1):
+        contrib += " ||"
+      else:
+        contrib += ")"
+      lsize = len(contrib) + 1
+      print contrib,
+    else:
+      contrib = "%s > %s" % (lhs, rhs)
+      if (j < len(item) - 1):
+        contrib += " ||"
+      else:
+        contrib += ")"
+      if (lsize + len(contrib) < 92):
+        lsize += len(contrib) + 1
+        print contrib,
+      else:
+        print
+        noreset = False;
+        contrib = "          " + contrib
+        lsize = len(contrib) + 1
+        print contrib,
+  contrib = "return false;"
+  if (lsize + len(contrib) < 96 and noreset):
+    print contrib
+  else:
+    print "{"
+    print "        return false;"
+    print "      }"
+print "  }"
+print "  return result;"
+print "}"

@@ -4861,8 +4861,7 @@ symmetry= 3/4+Z,1/4+Y,1/4-X
 symmetry= 1/4+Z,1/4-Y,3/4+X
 symmetry= 1/4-Z,3/4+Y,1/4+X
 symmetry= 3/4-Z,3/4-Y,3/4-X
-asymm= -1/4<=x<=1/2 and 0<=y<=3/4 and 0<=z<=1/2 and x<=y<=x+1/2 and
-y-x)/2<=z<=min(y,(-4 x-2 y+3)/2,(3-2 x-2 y)/4)
+asymm= -1/4<=x<=1/2 and 0<=y<=3/4 and 0<=z<=1/2 and x<=y<=x+1/2 and (y-x)/2<=z<=min(y,(-4 x-2 y+3)/2,(3-2 x-2 y)/4)
 214 I4(1)32
 Number of Symmetry Operators = 48
 Space Group Name = I4(1)32
