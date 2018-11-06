@@ -207,11 +207,15 @@ class Frame {
     inline void Translate(Vec3 const&);
     /// Translate all atoms by negative Vec
     inline void NegTranslate(Vec3 const&);
-    /// Rotate all coords by matrix
-    inline void Rotate(Matrix_3x3 const&);
+    /// Rotate all atoms in range by matrix
+    inline void Rotate(Matrix_3x3 const&, int, int);
+    /// Rotate atoms by matrix
+    inline void Rotate(Matrix_3x3 const&, int);
     /// Rotate all atoms in mask by matrix
     inline void Rotate(Matrix_3x3 const&, AtomMask const&);
     inline void InverseRotate(Matrix_3x3 const&, AtomMask const&);
+    /// Rotate all coords by matrix
+    inline void Rotate(Matrix_3x3 const&);
     /// Apply translation followed by rotation followed by second translation
     inline void Trans_Rot_Trans(Vec3 const&, Matrix_3x3 const&, Vec3 const&);
     /// Apply translation, rotation, 2nd translation for atoms in mask
@@ -394,6 +398,26 @@ void Frame::NegTranslate(Vec3 const& Vec) {
     X_[i+1] -= Vec[1];
     X_[i+2] -= Vec[2];
   }
+}
+
+void Frame::Rotate(Matrix_3x3 const& T, int llim, int hlim) {
+  for (int i = 3*llim; i < 3*hlim; i += 3) {
+    double x = X_[i  ];
+    double y = X_[i+1];
+    double z = X_[i+2];
+    X_[i  ] = (x*T[0]) + (y*T[1]) + (z*T[2]);
+    X_[i+1] = (x*T[3]) + (y*T[4]) + (z*T[5]);
+    X_[i+2] = (x*T[6]) + (y*T[7]) + (z*T[8]);
+  }
+}
+
+void Frame::Rotate(Matrix_3x3 const& T, int iatm) {
+  double x = X_[3*iatm    ];
+  double y = X_[3*iatm + 1];
+  double z = X_[3*iatm + 2];
+  X_[3*iatm    ] = (x*T[0]) + (y*T[1]) + (z*T[2]);
+  X_[3*iatm + 1] = (x*T[3]) + (y*T[4]) + (z*T[5]);
+  X_[3*iatm + 2] = (x*T[6]) + (y*T[7]) + (z*T[8]);
 }
 
 void Frame::Rotate(Matrix_3x3 const& T) {

@@ -3,6 +3,8 @@
 #include "Action_XtalSymm.h"
 #include "CpptrajStdio.h"
 #include "Matrix.h"
+#include "Molecule.h"
+#include "Topology.h"
 
 //---------------------------------------------------------------------------------------------
 // Action_XtalSymm::Help()
@@ -28,6 +30,7 @@ Action::RetType Action_XtalSymm::Init(ArgList& actionArgs, ActionInit& init, int
   nCopyB = actionArgs.getKeyInt("nb", 1);
   nCopyC = actionArgs.getKeyInt("nc", 1);
   allToFirstASU_ = actionArgs.hasKey("collect");  
+  molCentToASU_ = actionArgs.hasKey("centroid");  
   LoadSpaceGroupSymOps();
 
   // Get the reference frame if possible (if there is no reference, the first
@@ -42,29 +45,14 @@ Action::RetType Action_XtalSymm::Init(ArgList& actionArgs, ActionInit& init, int
   subunitOpID.reserve(nops);
   nmasks = 0;
   bool proceed = true;
-  do {
-    std::string mask = actionArgs.GetMaskNext();
-    if (mask.empty()) {
-      proceed = false;
-    }
-    else {
-      Masks[nmasks].SetMaskString(mask);
-      nmasks++;
-    }
-  } while (proceed);
-  
-  // Set up the data set for accessing the masks
-#if 0
-  MetaData md(actionArgs.GetStringNext(), MetaData::UNKNOWN_MODE);
-  DataSet* ds = init.DSL().AddSet(DataSet::INTEGER, md, "ASU_masks");
-  SizeArray sz{1};
-  ds->Allocate(sz);
-  ds->Add(0, &nops);
-  if (ds == 0) {
+  std::string mask = actionArgs.GetMaskNext();
+  if (mask.empty()) {
+    mprintf("Error.  A mask for the asymmetric unit must be specified.\n");
     return Action::ERR;
   }
-#endif
-  
+  Masks[nmasks].SetMaskString(mask);
+  nmasks++;
+
   return Action::OK;
 }
 
@@ -203,6 +191,52 @@ double Action_XtalSymm::BestSuperposition(int maskID, int operID, XtalDock* lead
 }
 
 //---------------------------------------------------------------------------------------------
+// DetectAsuResidence: detect which ASU the given point lies in.
+//
+// Arguments:
+//   [x,y,z]:    the fractional coordinates of the point
+//---------------------------------------------------------------------------------------------
+TransOp Action_XtalSymm::DetectAsuResidence(double x, double y, double z)
+{
+  int i, j, k, m;
+  Vec3 pt;
+  Matrix_3x3 Rmat;
+  TransOp amove;
+  
+  for (i = -1; i <= 1; i++) {
+    for (j = -1; j <= 1; j++) {
+      for (k = -1; k <= 1; k++) {
+        for (m = 0; m < nops; m++) {
+          Rmat = Matrix_3x3(R[m]);
+          pt = Vec3(x + (double)i, y + (double)j, z + (double)k);
+          pt = pt - T[m];
+          pt = Rmat * pt;
+          if (PointInPrimaryASU(pt[0], pt[1], pt[2])) {
+
+            // This is a solution, break out of all loops
+            amove.opID = m;
+            amove.tr_x = (double)i;
+            amove.tr_y = (double)j;
+            amove.tr_z = (double)k;
+            return amove;
+          }
+        }
+      }
+    }
+  }
+
+  // Raise a warning if this didn't fall into any ASU
+  amove.opID = 0;
+  amove.tr_x = 0.0;
+  amove.tr_y = 0.0;
+  amove.tr_z = 0.0;
+  mprintf("Warning: point %9.4lf %9.4lf %9.4lf did not fall into any asymmteric unit.\n",
+          x, y, z);
+
+  return amove;
+}
+
+//---------------------------------------------------------------------------------------------
 // BuildAsuGrid: build a grid spanning the unit cell to indicate the approximate extent of
 //               each asymmetric unit's volume.  Grid bins that do not fall entirely within
 //               one asymmetric unit will be labelled as wildcards and any coordinates that
@@ -217,15 +251,15 @@ Action::RetType Action_XtalSymm::BuildAsuGrid()
   double prevTy = 0.0;
   double prevTz = 0.0;
   Matrix_3x3 Rmat;
-  AsuGrid = new TransOp[7077888];
-  for (i = 0; i < 192; i++) {
-    for (j = 0; j < 192; j++) {
-      for (k = 0; k < 192; k++) {
+  AsuGrid = new TransOp[IASU_GRID_BINS * IASU_GRID_BINS * IASU_GRID_BINS];
+  for (i = 0; i < IASU_GRID_BINS; i++) {
+    for (j = 0; j < IASU_GRID_BINS; j++) {
+      for (k = 0; k < IASU_GRID_BINS; k++) {
 
         // First, select a point in the middle of the grid bin and find its ASU.
-        double ptx = ((double)i + 0.5)/192.0;
-        double pty = ((double)j + 0.5)/192.0;
-        double ptz = ((double)k + 0.5)/192.0;
+        double ptx = ((double)i + 0.5) / DASU_GRID_BINS;
+        double pty = ((double)j + 0.5) / DASU_GRID_BINS;
+        double ptz = ((double)k + 0.5) / DASU_GRID_BINS;
         Vec3 pt = Vec3(ptx + prevTx, pty + prevTy, ptz + prevTz);
         pt = pt - T[prevOpID];
         Rmat = Matrix_3x3(R[prevOpID]);
@@ -262,8 +296,9 @@ Action::RetType Action_XtalSymm::BuildAsuGrid()
         for (ii = 0; ii < 2; ii++) {
           for (jj = 0; jj < 2; jj++) {
             for (kk = 0; kk < 2; kk++) {
-              pt = Vec3(ptx + (double)ii/192.0 + prevTx, pty + (double)jj/192.0 + prevTy,
-                        ptz + (double)kk/192.0 + prevTz);
+              pt = Vec3(ptx + (double)ii/DASU_GRID_BINS + prevTx,
+                        pty + (double)jj/DASU_GRID_BINS + prevTy,
+                        ptz + (double)kk/DASU_GRID_BINS + prevTz);
               pt = pt - T[prevOpID];
               pt = Rmat * pt;
               if (PointInPrimaryASU(pt[0], pt[1], pt[2]) == false) {
@@ -277,7 +312,7 @@ Action::RetType Action_XtalSymm::BuildAsuGrid()
         }
 
         // Record the result
-        int idx = i*36864 + 192*j + k;
+        int idx = (i*IASU_GRID_BINS + j)*IASU_GRID_BINS + k;
         if (complete) {
           AsuGrid[idx].opID = prevOpID;
           AsuGrid[idx].tr_x = prevTx;
@@ -325,76 +360,65 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
 
   // If there are not enough masks specified (it's tedious to do, and would make
   // the action command lengthy), then generate all the rest based on the first.
-  if (nmasks < nops) {
-    int nMaskAtom = Masks[0].Nselected();
-    int nTopolAtom = setup.Top().Natom();
-    std::vector<int> baseMask = Masks[0].Selected();
-    std::vector<int> newMask = Masks[0].Selected();
+  int nMaskAtom = Masks[0].Nselected();
+  int nTopolAtom = setup.Top().Natom();
+  std::vector<int> baseMask = Masks[0].Selected();
+  std::vector<int> newMask = Masks[0].Selected();
 
-    // Create an array to hold whether each atom has been included in a mask
-    int* occupancy;
-    occupancy = new int[nTopolAtom];
-    memset(occupancy, 0, nTopolAtom * sizeof(int));
-    for (i = 0; i < nMaskAtom; i++) {
-      occupancy[baseMask[i]] = 1;
-    }
+  // Create an array to hold whether each atom has been included in a mask
+  int* occupancy;
+  occupancy = new int[nTopolAtom];
+  memset(occupancy, 0, nTopolAtom * sizeof(int));
+  for (i = 0; i < nMaskAtom; i++) {
+    occupancy[baseMask[i]] = 1;
+  }
 
-    // For every other mask that is needed, loop over the topology and find
-    // equivalent atoms.  If all atoms can be matched in a sequence and spacing
-    // identical to the original mask, without stepping on atoms that are already
-    // taken, then this is a new, equivalent, asymmetric unit.
-    int startpos = 0;
-    int maskwidth = 0;
-    for (i = 0; i < nMaskAtom; i++) {
-      if (baseMask[i] - baseMask[0] > maskwidth) {
-        maskwidth = baseMask[i] - baseMask[0];
-      }
+  // For every other mask that is needed, loop over the topology and find
+  // equivalent atoms.  If all atoms can be matched in a sequence and spacing
+  // identical to the original mask, without stepping on atoms that are already
+  // taken, then this is a new, equivalent, asymmetric unit.
+  int startpos = 0;
+  int maskwidth = 0;
+  for (i = 0; i < nMaskAtom; i++) {
+    if (baseMask[i] - baseMask[0] > maskwidth) {
+      maskwidth = baseMask[i] - baseMask[0];
     }
-    for (i = 1; i < nops; i++) {
-      for (j = startpos; j < nTopolAtom - maskwidth; j++) {
-        int nmatched = 0;
-        for (k = 0; k < nMaskAtom; k++) {
-          int basepos = baseMask[k];
-          int candpos = j + baseMask[k] - baseMask[0];
-          if (occupancy[candpos] == 0 && setup.Top().TruncNumberlessResAtomName(candpos) ==
-                                         setup.Top().TruncNumberlessResAtomName(basepos)) {
-            nmatched++;
-          }
-          else {
-            break;
-          }
-        }
-        
-        // If there are as many matches as there are atoms in the mask, this was a success.
-        // Otherwise, increment the starting position so that future searches do not run
-        // back over the same atoms again.
-        if (nmatched == nMaskAtom) {
-          Masks[i].ClearSelected();
-          for (k = 0; k < nMaskAtom; k++) {
-            newMask[k] = j + baseMask[k] - baseMask[0];
-            occupancy[j + baseMask[k] - baseMask[0]] = 1;
-          }
-          Masks[i].AddAtoms(newMask);
-          break;
+  }
+  for (i = 1; i < nops; i++) {
+    for (j = startpos; j < nTopolAtom - maskwidth; j++) {
+      int nmatched = 0;
+      for (k = 0; k < nMaskAtom; k++) {
+        int basepos = baseMask[k];
+        int candpos = j + baseMask[k] - baseMask[0];
+        if (occupancy[candpos] == 0 && setup.Top().TruncNumberlessResAtomName(candpos) ==
+                                       setup.Top().TruncNumberlessResAtomName(basepos)) {
+          nmatched++;
         }
         else {
-          startpos++;
+          break;
         }
       }
-    }
-
-    // Free allocated memory
-    delete[] occupancy;
-  }
-  else {
-
-    // Set up integer masks for all other user-specified strings
-    for (i = 1; i < nops; i++) {
-      if (setup.Top().SetupIntegerMask(Masks[i])) {
-        return Action::ERR;
+        
+      // If there are as many matches as there are atoms in the mask, this was a success.
+      // Otherwise, increment the starting position so that future searches do not run
+      // back over the same atoms again.
+      if (nmatched == nMaskAtom) {
+        Masks[i].ClearSelected();
+        for (k = 0; k < nMaskAtom; k++) {
+          newMask[k] = j + baseMask[k] - baseMask[0];
+          occupancy[j + baseMask[k] - baseMask[0]] = 1;
+        }
+        Masks[i].AddAtoms(newMask);
+        break;
+      }
+      else {
+        startpos++;
       }
     }
   }
+
+  // Free allocated memory
+  delete[] occupancy;
 
   // Determine which rotations are identity matrices
   rotIdentity = new bool[nops];
@@ -410,27 +434,65 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
       rotIdentity[i] = false;
     }
   }
-
-  // Create a lookup table to help determine ASUs for loose particles
+  
+  // Create a lookup table to help determine ASUs for loose particles,
+  // then a mask to detail all particles not in one of the designated
+  // asymmetric units.  These 'loose' particles, which are probably
+  // solvent, do not have an assigned ASU but nonetheless must fall
+  // into one at any given time.
   if (allToFirstASU_) {
-
-    // CHECK
-    printf("Start calculating grid.\n");
-    // END CHECK
-    
     BuildAsuGrid();
-    
-    // CHECK
-    for (i = 92; i < 100; i++) {
-      for (j = 92; j < 100; j++) {
-        for (k = 92; k < 100; k++) {
-          printf("%d ", AsuGrid[i*192*192 + j*192 + k].opID);
-        }
-        printf("\n");
-      }
-      printf("\n");
+    int* SolventAtoms = new int[setup.Top().Natom()];
+    for (i = 0; i < setup.Top().Natom(); i++) {
+      SolventAtoms[i] = 1;
     }
-    // END CHECK
+    for (i = 0; i < nops; i++) {
+      for (j = 0; j < Masks[i].Nselected(); j++) {
+        SolventAtoms[Masks[i].Selected()[j]] = 0;
+      }
+    }
+    int nnonasu = 0;
+    for (i = 0; i < setup.Top().Natom(); i++) {
+      if (SolventAtoms[i] == 1) {
+        nnonasu++;
+      }
+    }
+    if (molCentToASU_) {
+
+      // If solvent molecules are to be re-imaged whole into the primary ASU, mark them
+      // separately and remove them from the list of individual atoms to remove.
+      nMolecule = setup.Top().Nmol();
+      molLimits = new int[2 * nMolecule];
+      molInSolvent = new bool[nMolecule];
+      for (i = 0; i < nMolecule; i++) {
+        molLimits[2*i    ] = setup.Top().Mol(i).BeginAtom();
+        molLimits[2*i + 1] = setup.Top().Mol(i).EndAtom();
+        molInSolvent[i] = true;
+        for (j = molLimits[i]; j < molLimits[i+1]; j++) {
+          if (SolventAtoms[j] == 0) {
+            molInSolvent[i] = false;
+          }
+        }
+        if (molInSolvent[i]) {
+          for (j = molLimits[i]; j < molLimits[i+1]; j++) {
+            SolventAtoms[j] = 0;
+          }
+        }
+      }
+    }
+    else {
+      nMolecule = 0;
+    }
+    std::vector<int> SolventList;
+    SolventList.reserve(nnonasu);
+    j = 0;
+    for (i = 0; i < setup.Top().Natom(); i++) {
+      if (SolventAtoms[i] == 1) {
+        SolventList.push_back(i);
+        j++;
+      }
+    }    
+    SolventMask = AtomMask(SolventList, nnonasu);
   }
   
   return Action::OK;
@@ -710,13 +772,16 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     cmove[2] = round(cmove[2]);
     cmove = (U * cmove) - (U * T[opID]);
     
-    // Translate the second subunit as needed, then apply the inverse rotation
+    // Translate the second subunit as needed.  This is the first part of the
+    // reverse symmetry operation.  After all subunits have had their translations
+    // removed, a consensus origin for the whole system will be computed in order
+    // to apply the reverse rotations.
     othr[i].Translate(cmove);
     frm.ModifyFrm().Translate(cmove, Masks[i]);
   }
   Vec3 Ovec = BestOrigin(orig, othr, subunitOpID);
 
-  // Record the final result, the origin at which all of these transformations are valid
+  // Apply the final result, the origin at which all of these transformations are valid
   frm.ModifyFrm().NegTranslate(Ovec);  
   for (i = 0; i < nops; i++) {
     int opID = subunitOpID[i];
@@ -725,6 +790,77 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     frm.ModifyFrm().Rotate(Rmat, Masks[i]);
   }
 
+  // It is now possible to re-image all solvent molecules (those not in one of the
+  // specified asymmetric units), and then determine to which asymmetric unit they
+  // belong.
+  if (allToFirstASU_) {
+    frm.ModifyFrm().Rotate(invU, SolventMask);
+    if (molCentToASU_) {
+      for (i = 0; i < nMolecule; i++) {
+        if (molInSolvent[i]) {
+
+          // Re-image the entire molecule
+          double x = 0.0;
+          double y = 0.0;
+          double z = 0.0;
+          for (j = molLimits[2*i]; j < molLimits[2*i + 1]; j++) {
+            x += *frm.Frm().CRD(3*j);
+            y += *frm.Frm().CRD(3*j + 1);
+            z += *frm.Frm().CRD(3*j + 2);
+          }
+          double dfac = 1.0 / (double)(molLimits[2*i + 1] - molLimits[2*i]);
+          x *= dfac;
+          y *= dfac;
+          z *= dfac;
+          frm.ModifyFrm().Translate(Vec3(0.5 - round(x), 0.5 - round(y), 0.5 - round(z)),
+                                    molLimits[2*i], molLimits[2*i + 1]);
+          x += 0.5 - round(x);
+          y += 0.5 - round(y);
+          z += 0.5 - round(z);
+          
+          // Use the grid to determine the asymmetric unit (if the grid says "operation -1",
+          // an intensive search will be done to find the correct ASU)
+          int gidx = (int)(x * DASU_GRID_BINS);
+          int gidy = (int)(y * DASU_GRID_BINS);
+          int gidz = (int)(z * DASU_GRID_BINS);
+          gidx = (gidx*IASU_GRID_BINS + gidy)*IASU_GRID_BINS + gidz;
+          TransOp Vm = (AsuGrid[gidx].opID == -1) ? DetectAsuResidence(x, y, z) :
+                                                    AsuGrid[gidx];
+          frm.ModifyFrm().Translate(Vec3(Vm.tr_x, Vm.tr_y, Vm.tr_z) - T[Vm.opID],
+                                    molLimits[2*i], molLimits[2*i + 1]);
+          Matrix_3x3 Rmat = R[Vm.opID];
+          Rmat.Transpose();
+          frm.ModifyFrm().Rotate(Rmat, molLimits[2*i], molLimits[2*i + 1]);
+        }
+      }
+    }
+    for (i = 0; i < SolventMask.Nselected(); i++) {
+      int iatm = SolventMask.Selected()[i];
+
+      // Re-image the ith solvent atom
+      double x = *frm.Frm().CRD(3*iatm);
+      double y = *frm.Frm().CRD(3*iatm + 1);
+      double z = *frm.Frm().CRD(3*iatm + 2);
+      frm.ModifyFrm().Translate(Vec3(0.5 - round(x), 0.5 - round(y), 0.5 - round(z)), iatm);
+      x += 0.5 - round(x);
+      y += 0.5 - round(y);
+      z += 0.5 - round(z);
+
+      // Use the grid to determine the asymmetric unit (if the grid says "operation -1",
+      // an intensive search will be done to find the correct ASU)
+      int gidx = (int)(x * DASU_GRID_BINS);
+      int gidy = (int)(y * DASU_GRID_BINS);
+      int gidz = (int)(z * DASU_GRID_BINS);
+      gidx = (gidx*IASU_GRID_BINS + gidy)*IASU_GRID_BINS + gidz;
+      TransOp Vm = (AsuGrid[gidx].opID == -1) ? DetectAsuResidence(x, y, z) : AsuGrid[gidx];
+      frm.ModifyFrm().Translate(Vec3(Vm.tr_x, Vm.tr_y, Vm.tr_z) - T[Vm.opID], iatm);
+      Matrix_3x3 Rmat = R[Vm.opID];
+      Rmat.Transpose();
+      frm.ModifyFrm().Rotate(Rmat, iatm);
+    }
+    frm.ModifyFrm().Rotate(U, SolventMask);
+  }
+  
   // Free allocated memory
   delete[] othr;
   
@@ -742,6 +878,10 @@ Action_XtalSymm::~Action_XtalSymm()
   delete[] rotIdentity;
   if (allToFirstASU_) {
     delete[] AsuGrid;
+    if (molCentToASU_) {
+      delete[] molLimits;
+      delete[] molInSolvent;
+    }
   }
 }
 
