@@ -90,12 +90,14 @@ class Action_XtalSymm : public Action {
   
     // Masks for the asymmetric units and solvent particles
     int nmasks;
-    AtomMask*  Masks;
-    AtomMask   SolventMask;
+    AtomMask* Masks;
+    AtomMask  SolventParticles;
+    AtomMask  SolventMolecules;
     std::vector<int> subunitOpID;
   
     // Rotation matrices and translation vectors
     Matrix_3x3* R;
+    Matrix_3x3* Rinv;
     Vec3* T;
     Vec3* RefT;
     bool* rotIdentity;

@@ -80,30 +80,29 @@ Vec3 Action_XtalSymm::BestOrigin(Frame& orig, Frame* othr, std::vector<int>& ope
   b.resize(stride * operID.capacity());
   unsigned int i, j;
   for (i = 0; i < operID.capacity(); i++) {
-    Matrix_3x3 Rmat = Matrix_3x3(R[operID[i]]);
-    Rmat.Transpose();
+    int opIDi = operID[i];
     for (j = 0; j < orig.Natom(); j++) {
-      A.setElement(0, i*stride + 3*j    , 1.0 - Rmat.Row1()[0]);
-      A.setElement(1, i*stride + 3*j    ,     - Rmat.Row1()[1]);
-      A.setElement(2, i*stride + 3*j    ,     - Rmat.Row1()[2]);
-      A.setElement(0, i*stride + 3*j + 1,     - Rmat.Row2()[0]);
-      A.setElement(1, i*stride + 3*j + 1, 1.0 - Rmat.Row2()[1]);
-      A.setElement(2, i*stride + 3*j + 1,     - Rmat.Row2()[2]);
-      A.setElement(0, i*stride + 3*j + 2,     - Rmat.Row3()[0]);
-      A.setElement(1, i*stride + 3*j + 2,     - Rmat.Row3()[1]);
-      A.setElement(2, i*stride + 3*j + 2, 1.0 - Rmat.Row3()[2]);
+      A.setElement(0, i*stride + 3*j    , 1.0 - Rinv[opIDi][0]);
+      A.setElement(1, i*stride + 3*j    ,     - Rinv[opIDi][1]);
+      A.setElement(2, i*stride + 3*j    ,     - Rinv[opIDi][2]);
+      A.setElement(0, i*stride + 3*j + 1,     - Rinv[opIDi][3]);
+      A.setElement(1, i*stride + 3*j + 1, 1.0 - Rinv[opIDi][4]);
+      A.setElement(2, i*stride + 3*j + 1,     - Rinv[opIDi][5]);
+      A.setElement(0, i*stride + 3*j + 2,     - Rinv[opIDi][6]);
+      A.setElement(1, i*stride + 3*j + 2,     - Rinv[opIDi][7]);
+      A.setElement(2, i*stride + 3*j + 2, 1.0 - Rinv[opIDi][8]);
       b[i*stride + 3*j    ] = (*orig.CRD(3*j    )) -
-                              (Rmat.Row1()[0] * (*othr[i].CRD(3*j    )) +
-                               Rmat.Row1()[1] * (*othr[i].CRD(3*j + 1)) +
-                               Rmat.Row1()[2] * (*othr[i].CRD(3*j + 2)));
+                              (Rinv[opIDi][0] * (*othr[i].CRD(3*j    )) +
+                               Rinv[opIDi][1] * (*othr[i].CRD(3*j + 1)) +
+                               Rinv[opIDi][2] * (*othr[i].CRD(3*j + 2)));
       b[i*stride + 3*j + 1] = (*orig.CRD(3*j + 1)) -
-                              (Rmat.Row2()[0] * (*othr[i].CRD(3*j    )) +
-                               Rmat.Row2()[1] * (*othr[i].CRD(3*j + 1)) +
-                               Rmat.Row2()[2] * (*othr[i].CRD(3*j + 2)));
+                              (Rinv[opIDi][3] * (*othr[i].CRD(3*j    )) +
+                               Rinv[opIDi][4] * (*othr[i].CRD(3*j + 1)) +
+                               Rinv[opIDi][5] * (*othr[i].CRD(3*j + 2)));
       b[i*stride + 3*j + 2] = (*orig.CRD(3*j + 2)) -
-                              (Rmat.Row3()[0] * (*othr[i].CRD(3*j    )) +
-                               Rmat.Row3()[1] * (*othr[i].CRD(3*j + 1)) +
-                               Rmat.Row3()[2] * (*othr[i].CRD(3*j + 2)));
+                              (Rinv[opIDi][6] * (*othr[i].CRD(3*j    )) +
+                               Rinv[opIDi][7] * (*othr[i].CRD(3*j + 1)) +
+                               Rinv[opIDi][8] * (*othr[i].CRD(3*j + 2)));
     }
   }
   A.llsp(b.data());
@@ -165,12 +164,10 @@ double Action_XtalSymm::BestSuperposition(int maskID, int operID, XtalDock* lead
         Tvec = U * Tvec;
         othr.SetCoordinates(RefFrame_, Masks[maskID]);
         othr.Translate(Tvec);
-        Matrix_3x3 Rmat = Matrix_3x3(R[operID]);
-        Rmat.Transpose();
         Vec3 Ovec = BestOrigin(orig, &othr, operIDv);
         orig.NegTranslate(Ovec);
         othr.NegTranslate(Ovec);
-        othr.Rotate(Rmat);
+        othr.Rotate(Rinv[operID]);
         
         // Compute the root-mean squared deviation of the two subunits, then
         // put the original subunit back in its official frame of reference.
@@ -200,17 +197,15 @@ TransOp Action_XtalSymm::DetectAsuResidence(double x, double y, double z)
 {
   int i, j, k, m;
   Vec3 pt;
-  Matrix_3x3 Rmat;
   TransOp amove;
   
   for (i = -1; i <= 1; i++) {
     for (j = -1; j <= 1; j++) {
       for (k = -1; k <= 1; k++) {
         for (m = 0; m < nops; m++) {
-          Rmat = Matrix_3x3(R[m]);
           pt = Vec3(x + (double)i, y + (double)j, z + (double)k);
           pt = pt - T[m];
-          pt = Rmat * pt;
+          pt = Rinv[m] * pt;
           if (PointInPrimaryASU(pt[0], pt[1], pt[2])) {
 
             // This is a solution, break out of all loops
@@ -250,7 +245,6 @@ Action::RetType Action_XtalSymm::BuildAsuGrid()
   double prevTx = 0.0;
   double prevTy = 0.0;
   double prevTz = 0.0;
-  Matrix_3x3 Rmat;
   AsuGrid = new TransOp[IASU_GRID_BINS * IASU_GRID_BINS * IASU_GRID_BINS];
   for (i = 0; i < IASU_GRID_BINS; i++) {
     for (j = 0; j < IASU_GRID_BINS; j++) {
@@ -262,19 +256,16 @@ Action::RetType Action_XtalSymm::BuildAsuGrid()
         double ptz = ((double)k + 0.5) / DASU_GRID_BINS;
         Vec3 pt = Vec3(ptx + prevTx, pty + prevTy, ptz + prevTz);
         pt = pt - T[prevOpID];
-        Rmat = Matrix_3x3(R[prevOpID]);
-        Rmat.Transpose();
-        pt = Rmat * pt;
+        pt = Rinv[prevOpID] * pt;
         bool success = PointInPrimaryASU(pt[0], pt[1], pt[2]);
         if (!success) {
           for (ii = -1; ii <= 1; ii++) {
             for (jj = -1; jj <= 1; jj++) {
               for (kk = -1; kk <= 1; kk++) {
                 for (m = 0; m < nops; m++) {
-                  Rmat = Matrix_3x3(R[m]);
                   pt = Vec3(ptx + (double)ii, pty + (double)jj, ptz + (double)kk);
                   pt = pt - T[m];
-                  pt = Rmat * pt;
+                  pt = Rinv[m] * pt;
                   if (PointInPrimaryASU(pt[0], pt[1], pt[2])) {
 
                     // This is a solution, break out of all loops
@@ -300,7 +291,7 @@ Action::RetType Action_XtalSymm::BuildAsuGrid()
                         pty + (double)jj/DASU_GRID_BINS + prevTy,
                         ptz + (double)kk/DASU_GRID_BINS + prevTz);
               pt = pt - T[prevOpID];
-              pt = Rmat * pt;
+              pt = Rinv[prevOpID] * pt;
               if (PointInPrimaryASU(pt[0], pt[1], pt[2]) == false) {
                 complete = false;
                 ii = 2;
@@ -442,18 +433,20 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
   // into one at any given time.
   if (allToFirstASU_) {
     BuildAsuGrid();
-    int* SolventAtoms = new int[setup.Top().Natom()];
+    int* LoneAtoms = new int[setup.Top().Natom()];
+    int* MoleAtoms = new int[setup.Top().Natom()];
     for (i = 0; i < setup.Top().Natom(); i++) {
-      SolventAtoms[i] = 1;
+      LoneAtoms[i] = 1;
+      MoleAtoms[i] = 0;
     }
     for (i = 0; i < nops; i++) {
       for (j = 0; j < Masks[i].Nselected(); j++) {
-        SolventAtoms[Masks[i].Selected()[j]] = 0;
+        LoneAtoms[Masks[i].Selected()[j]] = 0;
       }
     }
     int nnonasu = 0;
     for (i = 0; i < setup.Top().Natom(); i++) {
-      if (SolventAtoms[i] == 1) {
+      if (LoneAtoms[i] == 1) {
         nnonasu++;
       }
     }
@@ -468,14 +461,15 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
         molLimits[2*i    ] = setup.Top().Mol(i).BeginAtom();
         molLimits[2*i + 1] = setup.Top().Mol(i).EndAtom();
         molInSolvent[i] = true;
-        for (j = molLimits[i]; j < molLimits[i+1]; j++) {
-          if (SolventAtoms[j] == 0) {
+        for (j = molLimits[2*i]; j < molLimits[2*i + 1]; j++) {
+          if (LoneAtoms[j] == 0) {
             molInSolvent[i] = false;
           }
         }
         if (molInSolvent[i]) {
-          for (j = molLimits[i]; j < molLimits[i+1]; j++) {
-            SolventAtoms[j] = 0;
+          for (j = molLimits[2*i]; j < molLimits[2*i + 1]; j++) {
+            LoneAtoms[j] = 0;
+	    MoleAtoms[j] = 1;
           }
         }
       }
@@ -485,14 +479,26 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
     }
     std::vector<int> SolventList;
     SolventList.reserve(nnonasu);
-    j = 0;
     for (i = 0; i < setup.Top().Natom(); i++) {
-      if (SolventAtoms[i] == 1) {
+      if (LoneAtoms[i] == 1) {
         SolventList.push_back(i);
-        j++;
       }
-    }    
-    SolventMask = AtomMask(SolventList, nnonasu);
+    }
+    SolventParticles = AtomMask(SolventList, nnonasu);
+    if (molCentToASU_) {
+      SolventList.clear();
+      SolventList.reserve(nnonasu);
+      for (i = 0; i < setup.Top().Natom(); i++) {
+	if (MoleAtoms[i] == 1) {
+	  SolventList.push_back(i);
+	}
+      }
+      SolventMolecules = AtomMask(SolventList, nnonasu);
+    }
+    
+    // Free allocated memory
+    delete[] LoneAtoms;
+    delete[] MoleAtoms;
   }
   
   return Action::OK;
@@ -699,9 +705,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
             orig.NegTranslate(trOvec);
             for (j = 0; j < nops; j++) {
               othr[j].NegTranslate(trOvec);
-              Matrix_3x3 Rmat = R[trialOpID[j]];
-              Rmat.Transpose();
-              othr[j].Rotate(Rmat);
+              othr[j].Rotate(Rinv[trialOpID[j]]);
             }
             double trmsd = 0.0;
             for (j = 0; j < nops; j++) {
@@ -785,17 +789,16 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
   frm.ModifyFrm().NegTranslate(Ovec);  
   for (i = 0; i < nops; i++) {
     int opID = subunitOpID[i];
-    Matrix_3x3 Rmat = R[opID];
-    Rmat.Transpose();
-    frm.ModifyFrm().Rotate(Rmat, Masks[i]);
+    frm.ModifyFrm().Rotate(Rinv[opID], Masks[i]);
   }
 
   // It is now possible to re-image all solvent molecules (those not in one of the
   // specified asymmetric units), and then determine to which asymmetric unit they
   // belong.
   if (allToFirstASU_) {
-    frm.ModifyFrm().Rotate(invU, SolventMask);
+    frm.ModifyFrm().Rotate(invU, SolventParticles);
     if (molCentToASU_) {
+      frm.ModifyFrm().Rotate(invU, SolventMolecules);
       for (i = 0; i < nMolecule; i++) {
         if (molInSolvent[i]) {
 
@@ -828,14 +831,13 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
                                                     AsuGrid[gidx];
           frm.ModifyFrm().Translate(Vec3(Vm.tr_x, Vm.tr_y, Vm.tr_z) - T[Vm.opID],
                                     molLimits[2*i], molLimits[2*i + 1]);
-          Matrix_3x3 Rmat = R[Vm.opID];
-          Rmat.Transpose();
-          frm.ModifyFrm().Rotate(Rmat, molLimits[2*i], molLimits[2*i + 1]);
+          frm.ModifyFrm().Rotate(Rinv[Vm.opID], molLimits[2*i], molLimits[2*i + 1]);
         }
       }
+      frm.ModifyFrm().Rotate(U, SolventMolecules);
     }
-    for (i = 0; i < SolventMask.Nselected(); i++) {
-      int iatm = SolventMask.Selected()[i];
+    for (i = 0; i < SolventParticles.Nselected(); i++) {
+      int iatm = SolventParticles.Selected()[i];
 
       // Re-image the ith solvent atom
       double x = *frm.Frm().CRD(3*iatm);
@@ -854,11 +856,9 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
       gidx = (gidx*IASU_GRID_BINS + gidy)*IASU_GRID_BINS + gidz;
       TransOp Vm = (AsuGrid[gidx].opID == -1) ? DetectAsuResidence(x, y, z) : AsuGrid[gidx];
       frm.ModifyFrm().Translate(Vec3(Vm.tr_x, Vm.tr_y, Vm.tr_z) - T[Vm.opID], iatm);
-      Matrix_3x3 Rmat = R[Vm.opID];
-      Rmat.Transpose();
-      frm.ModifyFrm().Rotate(Rmat, iatm);
+      frm.ModifyFrm().Rotate(Rinv[Vm.opID], iatm);
     }
-    frm.ModifyFrm().Rotate(U, SolventMask);
+    frm.ModifyFrm().Rotate(U, SolventParticles);
   }
   
   // Free allocated memory
@@ -873,6 +873,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
 Action_XtalSymm::~Action_XtalSymm()
 {
   delete[] R;
+  delete[] Rinv;
   delete[] T;
   delete[] RefT;
   delete[] rotIdentity;
@@ -22943,6 +22944,14 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
       }
     }
   }
+
+  // Prepare a table of transposed (inverse) rotation matrices
+  Rinv = new Matrix_3x3[96 * nCopyA * nCopyB * nCopyC];
+  for (i = 0; i < nops; i++) {
+    Rinv[i] = R[i];
+    Rinv[i].Transpose();
+  }
+
   return Action::OK;
 }
 
