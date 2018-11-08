@@ -144,11 +144,6 @@ Action::RetType Action_AtomicFluct::Setup(ActionSetup& setup) {
   if (xtal_) {
     unitmap_  = new int[Mask_.Nselected()];
     unitmult_ = new double[Mask_.Nselected()];
-
-    // CHECK
-    printf("Detected %d ASUs\n", nASU_);
-    // END CHECK
-    
     for (int i = 0; i < nASU_; i++) {
     }
   }

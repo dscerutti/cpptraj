@@ -91,6 +91,17 @@ Vec3 Action_XtalSymm::BestOrigin(Frame& orig, Frame* othr, std::vector<int>& ope
       A.setElement(0, i*stride + 3*j + 2,     - Rinv[opIDi][6]);
       A.setElement(1, i*stride + 3*j + 2,     - Rinv[opIDi][7]);
       A.setElement(2, i*stride + 3*j + 2, 1.0 - Rinv[opIDi][8]);
+
+      // CHECK
+      if (opIDi < 0 || opIDi >= nops) {
+	printf("opIDi = %d out of %d ops\n", opIDi, nops);
+      }
+      if (j >= othr[i].Natom() || j < 0) {
+	printf("j = %d out of %d atoms, i = %d out of %d capacity.\n", j, othr[i].Natom(),
+	       i, operID.capacity());
+      }
+      // END CHECK
+      
       b[i*stride + 3*j    ] = (*orig.CRD(3*j    )) -
                               (Rinv[opIDi][0] * (*othr[i].CRD(3*j    )) +
                                Rinv[opIDi][1] * (*othr[i].CRD(3*j + 1)) +
@@ -327,7 +338,7 @@ Action::RetType Action_XtalSymm::BuildAsuGrid()
 Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
 {
   int i, j, k;
-
+  
   // Checks on the sanity of the system and suitability for crystal symmetry operations
   if (setup.CoordInfo().HasCrd() == false || setup.CoordInfo().HasBox() == false) {
     return Action::ERR;
@@ -410,7 +421,7 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
 
   // Free allocated memory
   delete[] occupancy;
-
+  
   // Determine which rotations are identity matrices
   rotIdentity = new bool[nops];
   for (i = 0; i < nops; i++) {
@@ -477,6 +488,7 @@ Action::RetType Action_XtalSymm::Setup(ActionSetup& setup)
     else {
       nMolecule = 0;
     }
+
     std::vector<int> SolventList;
     SolventList.reserve(nnonasu);
     for (i = 0; i < setup.Top().Natom(); i++) {
@@ -610,7 +622,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
   // done here, rather than in Setup, because the reference frame for determining
   // the strategy may have to be the first frame.
   if (frameNum == 0) {
-    
+
     // Use the reference if supplied.  Otherwise use the first frame.
     if (useFirst_) {
       RefFrame_.SetupFrame(frm.Frm().Natom());
@@ -727,7 +739,20 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
                 }
               }
             }
-
+	    
+	    // Exit if the standard solution works well enough
+	    if (bestRmsd < 1.0) {
+	      bool stdworks = true;
+              for (j = 0; j < nops; j++) {
+		if (trialOpID[j] != j) {
+		  stdworks = false;
+		}
+	      }
+	      if (stdworks) {
+		HowToGetThere[0] = nLead;
+	      }
+	    }
+	    
             // If there is more to do, decrement i and keep on going
             if (HowToGetThere[0] < nLead && i > 0) {
               i--;
@@ -742,7 +767,7 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
         }
       }
     }
-    
+          
     // Free allocated memory
     delete[] leads;
   }
@@ -22938,6 +22963,35 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
           T[ 47 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
                               (  0.0000000000 + dk) / dnC);
         }
+        else if (spaceGrp.compare("P22(1)2(1)") == 0) {
+          sgID = 227;
+          nops = 4 * nCopyA * nCopyB * nCopyC;
+          iuc *= 4;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  1 + iuc] = Matrix_3x3(Rdata);
+          T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  2 + iuc] = Matrix_3x3(Rdata);
+          T[  2 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  3 + iuc] = Matrix_3x3(Rdata);
+          T[  3 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+        }
         else {
           return Action::ERR;
         }
@@ -23997,6 +24051,8 @@ bool Action_XtalSymm::PointInPrimaryASU(double x, double y, double z)
         return false;
       }
       break;
+    case 227:
+      if (0.0 > z || z > half || 0.0 > y || y > half || 0.0 > x || x > 1.0) return false;
     default:
       break;
   }
