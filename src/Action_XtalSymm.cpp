@@ -44,7 +44,6 @@ Action::RetType Action_XtalSymm::Init(ArgList& actionArgs, ActionInit& init, int
   Masks = new AtomMask[nops];
   subunitOpID.reserve(nops);
   nmasks = 0;
-  bool proceed = true;
   std::string mask = actionArgs.GetMaskNext();
   if (mask.empty()) {
     mprintf("Error.  A mask for the asymmetric unit must be specified.\n");
@@ -158,7 +157,6 @@ double Action_XtalSymm::BestSuperposition(int maskID, int operID, XtalDock* lead
   double miny = floor(cdiff[1] - nearTwo);
   double minz = floor(cdiff[2] - nearTwo);
   double dx, dy, dz, di, dj, dk;
-  double best_guess = 1.0e8;
   std::vector<int> operIDv(1);
   operIDv[0] = operID;
   for (di = 0.0; di <= 4.0; di++) {
@@ -607,7 +605,7 @@ bool Action_XtalSymm::OriginsAlign(XtalDock* leads, int* HowToGetThere, int ncur
 //---------------------------------------------------------------------------------------------
 Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
 {
-  int i, j, k, m;
+  int i, j;
   Frame orig;
   Frame* othr = new Frame[nops];
   Matrix_3x3 U, invU;
@@ -645,8 +643,6 @@ Action::RetType Action_XtalSymm::DoAction(int frameNum, ActionFrame& frm)
     // Obtain clusters of origins, then see whether any of them holds all symmetry operations
     // and subunits, which of that group contains the tightest cluster of origins, and which
     // contains the lowest overall atom positional RMSD.  
-    XtalDock trial[nops], best[nops];
-    int occupancy[nops];
     int fnidXfrm = -1;
     for (i = 0; i < nops; i++) {
       if (rotIdentity[i] == false) {
@@ -970,7 +966,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
           T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
                               (  0.0000000000 + dk) / dnC);
         }
-        else if (spaceGrp.compare("P2") == 0) {
+        else if (spaceGrp.compare("P2") == 0 || spaceGrp.compare("P121") == 0) {
           sgID = 2;
           nops = 2 * nCopyA * nCopyB * nCopyC;
           iuc *= 2;
@@ -987,7 +983,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
           T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
                               (  0.0000000000 + dk) / dnC);
         }
-        else if (spaceGrp.compare("P2(1)") == 0) {
+        else if (spaceGrp.compare("P2(1)") == 0 || spaceGrp.compare("P12(1)1") == 0) {
           sgID = 3;
           nops = 2 * nCopyA * nCopyB * nCopyC;
           iuc *= 2;
@@ -1004,7 +1000,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
           T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
                               (  0.0000000000 + dk) / dnC);
         }
-        else if (spaceGrp.compare("C2") == 0) {
+        else if (spaceGrp.compare("C2") == 0 || spaceGrp.compare("C121") == 0) {
           sgID = 4;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
@@ -1265,7 +1261,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
           T[  3 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
                               (  0.5000000000 + dk) / dnC);
         }
-        else if (spaceGrp.compare("P2(1)/c") == 0) {
+        else if (spaceGrp.compare("P2(1)/c") == 0 || spaceGrp.compare("P12(1)/c1") == 0) {
           sgID = 13;
           nops = 4 * nCopyA * nCopyB * nCopyC;
           iuc *= 4;
@@ -1294,7 +1290,7 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
           T[  3 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
                               (  0.5000000000 + dk) / dnC);
         }
-        else if (spaceGrp.compare("C2/c") == 0) {
+        else if (spaceGrp.compare("C2/c") == 0 || spaceGrp.compare("C12/c1") == 0) {
           sgID = 14;
           nops = 8 * nCopyA * nCopyB * nCopyC;
           iuc *= 8;
@@ -22990,6 +22986,387 @@ Action::RetType Action_XtalSymm::LoadSpaceGroupSymOps()
           Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
           R[  3 + iuc] = Matrix_3x3(Rdata);
           T[  3 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+        }
+        else if (spaceGrp.compare("I121") == 0) {
+          sgID = 228;
+          nops = 4 * nCopyA * nCopyB * nCopyC;
+          iuc *= 4;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  1 + iuc] = Matrix_3x3(Rdata);
+          T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  2 + iuc] = Matrix_3x3(Rdata);
+          T[  2 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  3 + iuc] = Matrix_3x3(Rdata);
+          T[  3 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+        }
+        else if (spaceGrp.compare("B112") == 0) {
+          sgID = 229;
+          nops = 4 * nCopyA * nCopyB * nCopyC;
+          iuc *= 4;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  1 + iuc] = Matrix_3x3(Rdata);
+          T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  2 + iuc] = Matrix_3x3(Rdata);
+          T[  2 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  3 + iuc] = Matrix_3x3(Rdata);
+          T[  3 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+        }
+        else if (spaceGrp.compare("P2(1)/n") == 0 || spaceGrp.compare("P12(1)/n1") == 0) {
+          sgID = 230;
+          nops = 4 * nCopyA * nCopyB * nCopyC;
+          iuc *= 4;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  1 + iuc] = Matrix_3x3(Rdata);
+          T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  2 + iuc] = Matrix_3x3(Rdata);
+          T[  2 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  3 + iuc] = Matrix_3x3(Rdata);
+          T[  3 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+        }
+        else if (spaceGrp.compare("Pcab") == 0) {
+          sgID = 231;
+          nops = 8 * nCopyA * nCopyB * nCopyC;
+          iuc *= 8;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  1 + iuc] = Matrix_3x3(Rdata);
+          T[  1 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  2 + iuc] = Matrix_3x3(Rdata);
+          T[  2 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  3 + iuc] = Matrix_3x3(Rdata);
+          T[  3 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  4 + iuc] = Matrix_3x3(Rdata);
+          T[  4 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  5 + iuc] = Matrix_3x3(Rdata);
+          T[  5 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  6 + iuc] = Matrix_3x3(Rdata);
+          T[  6 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  7 + iuc] = Matrix_3x3(Rdata);
+          T[  7 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+        }
+        else if (spaceGrp.compare("H32") == 0) {
+          sgID = 232;
+          nops = 16 * nCopyA * nCopyB * nCopyC;
+          iuc *= 16;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =  -0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  1 + iuc] = Matrix_3x3(Rdata);
+	  T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB,
+			      (  0.0000000000 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =   0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =  -0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  2 + iuc] = Matrix_3x3(Rdata);
+	  T[  2 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB,
+			      (  0.0000000000 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =   0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =   0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+	  R[  3 + iuc] = Matrix_3x3(Rdata);
+	  T[  3 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB,
+			      (  0.0000000000 + di) / dnC);
+	  Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+	  R[  4 + iuc] = Matrix_3x3(Rdata);
+	  T[  4 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB,
+			      (  0.0000000000 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =  -0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =  -0.8660250000;  Rdata[4] =   0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+	  R[  5 + iuc] = Matrix_3x3(Rdata);
+	  T[  5 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB,
+			      (  0.0000000000 + di) / dnC);
+	  Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  6 + iuc] = Matrix_3x3(Rdata);
+	  T[  6 + iuc] = Vec3((  0.6666666728 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =  -0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  7 + iuc] = Matrix_3x3(Rdata);
+	  T[  7 + iuc] = Vec3((  0.6666666728 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =   0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =  -0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  8 + iuc] = Matrix_3x3(Rdata);
+	  T[  8 + iuc] = Vec3((  0.6666666728 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =   0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =   0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+	  R[  9 + iuc] = Matrix_3x3(Rdata);
+	  T[  9 + iuc] = Vec3((  0.6666666728 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+	  R[ 10 + iuc] = Matrix_3x3(Rdata);
+	  T[ 10 + iuc] = Vec3((  0.6666666728 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =  -0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =  -0.8660250000;  Rdata[4] =   0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+	  R[ 11 + iuc] = Matrix_3x3(Rdata);
+	  T[ 11 + iuc] = Vec3((  0.6666666728 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[ 12 + iuc] = Matrix_3x3(Rdata);
+	  T[ 12 + iuc] = Vec3((  0.3333333333 + di) / dnA, (  0.6666666667 + dj) / dnB,
+			      (  0.6666666667 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =  -0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[ 13 + iuc] = Matrix_3x3(Rdata);
+	  T[ 13 + iuc] = Vec3((  0.3333333333 + di) / dnA, (  0.6666666667 + dj) / dnB,
+			      (  0.6666666667 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =   0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =  -0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[ 14 + iuc] = Matrix_3x3(Rdata);
+	  T[ 14 + iuc] = Vec3((  0.3333333333 + di) / dnA, (  0.6666666667 + dj) / dnB,
+			      (  0.6666666667 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =   0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =   0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+	  R[ 15 + iuc] = Matrix_3x3(Rdata);
+	  T[ 15 + iuc] = Vec3((  0.3333333333 + di) / dnA, (  0.6666666667 + dj) / dnB,
+			      (  0.6666666667 + di) / dnC);
+        }
+        else if (spaceGrp.compare("P22(1)2") == 0) {
+          sgID = 233;
+          nops = 4 * nCopyA * nCopyB * nCopyC;
+          iuc *= 4;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  1 + iuc] = Matrix_3x3(Rdata);
+          T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  2 + iuc] = Matrix_3x3(Rdata);
+          T[  2 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  3 + iuc] = Matrix_3x3(Rdata);
+          T[  3 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+        }
+        else if (spaceGrp.compare("I2") == 0 || spaceGrp.compare("I121") == 0) {
+          sgID = 234;
+          nops = 4 * nCopyA * nCopyB * nCopyC;
+          iuc *= 4;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  1 + iuc] = Matrix_3x3(Rdata);
+          T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  2 + iuc] = Matrix_3x3(Rdata);
+          T[  2 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  3 + iuc] = Matrix_3x3(Rdata);
+          T[  3 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.5000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+        }
+        else if (spaceGrp.compare("H3") == 0) {
+          sgID = 235;
+          nops = 8 * nCopyA * nCopyB * nCopyC;
+          iuc *= 8;
+	  Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  0 + iuc] = Matrix_3x3(Rdata);
+	  T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB,
+			      (  0.0000000000 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =  -0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  1 + iuc] = Matrix_3x3(Rdata);
+	  T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB,
+			      (  0.0000000000 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =   0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =  -0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  2 + iuc] = Matrix_3x3(Rdata);
+	  T[  2 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB,
+			      (  0.0000000000 + di) / dnC);
+	  Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  3 + iuc] = Matrix_3x3(Rdata);
+	  T[  3 + iuc] = Vec3((  0.6666666667 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =  -0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  4 + iuc] = Matrix_3x3(Rdata);
+	  T[  4 + iuc] = Vec3((  0.6666666667 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =   0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =  -0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  5 + iuc] = Matrix_3x3(Rdata);
+	  T[  5 + iuc] = Vec3((  0.6666666667 + di) / dnA, (  0.3333333333 + dj) / dnB,
+			      (  0.3333333333 + di) / dnC);
+	  Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  6 + iuc] = Matrix_3x3(Rdata);
+	  T[  6 + iuc] = Vec3((  0.3333333333 + di) / dnA, (  0.6666666667 + dj) / dnB,
+			      (  0.6666666667 + di) / dnC);
+	  Rdata[0] =  -0.5000000000;  Rdata[1] =  -0.8660250000;  Rdata[2] =   0.0000000000;
+	  Rdata[3] =   0.8660250000;  Rdata[4] =  -0.5000000000;  Rdata[5] =   0.0000000000;
+	  Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+	  R[  7 + iuc] = Matrix_3x3(Rdata);
+	  T[  7 + iuc] = Vec3((  0.3333333333 + di) / dnA, (  0.6666666667 + dj) / dnB,
+			      (  0.6666666667 + di) / dnC);
+        }
+        else if (spaceGrp.compare("P2(1)22(1)") == 0) {
+          sgID = 236;
+          nops = 4 * nCopyA * nCopyB * nCopyC;
+          iuc *= 4;
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  0 + iuc] = Matrix_3x3(Rdata);
+          T[  0 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =   1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  1 + iuc] = Matrix_3x3(Rdata);
+          T[  1 + iuc] = Vec3((  0.0000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.0000000000 + dk) / dnC);
+          Rdata[0] =   1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =  -1.0000000000;
+          R[  2 + iuc] = Matrix_3x3(Rdata);
+          T[  2 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
+                              (  0.5000000000 + dk) / dnC);
+          Rdata[0] =  -1.0000000000;  Rdata[1] =   0.0000000000;  Rdata[2] =   0.0000000000;
+          Rdata[3] =   0.0000000000;  Rdata[4] =  -1.0000000000;  Rdata[5] =   0.0000000000;
+          Rdata[6] =   0.0000000000;  Rdata[7] =   0.0000000000;  Rdata[8] =   1.0000000000;
+          R[  3 + iuc] = Matrix_3x3(Rdata);
+          T[  3 + iuc] = Vec3((  0.5000000000 + di) / dnA, (  0.0000000000 + dj) / dnB, 
                               (  0.5000000000 + dk) / dnC);
         }
         else {
