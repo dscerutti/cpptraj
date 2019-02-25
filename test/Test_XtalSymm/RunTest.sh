@@ -13,7 +13,7 @@ cat > xtals.in << EOF
 parm ../x6dky.parm7
 trajin ../mdXtal.nc
 reference ../mdXtal.inpcrd
-xtalsymm :1-16 reference group P22(1)2(1) na 2 nb 2 nc 2
+xtalsymm :1-16 reference group P22(1)2(1) na 2 nb 1 nc 1
 trajout mdXtal.pdb
 EOF
 RunCpptraj "XtalSymm Reference"
@@ -24,7 +24,7 @@ cat > xtals.in << EOF
 parm ../x6dky.parm7
 trajin ../mdXtal.nc
 reference ../mdXtal.inpcrd
-xtalsymm :1-16 reference group P22(1)2(1) na 2 nb 2 nc 2 collect
+xtalsymm :1-16 reference group P22(1)2(1) na 2 nb 1 nc 1 collect
 trajout mdXtal.pdb
 EOF
 RunCpptraj "XtalSymm Reimaging by Atom"
@@ -35,7 +35,7 @@ cat > xtals.in << EOF
 parm ../x6dky.parm7
 trajin ../mdXtal.nc
 reference ../mdXtal.inpcrd
-xtalsymm :1-16 reference group P22(1)2(1) na 2 nb 2 nc 2 collect centroid
+xtalsymm :1-16 reference group P22(1)2(1) na 2 nb 1 nc 1 collect centroid
 trajout mdXtal.pdb
 EOF
 RunCpptraj "XtalSymm Reimaging by Molecule"
